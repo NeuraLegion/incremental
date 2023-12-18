@@ -1,0 +1,13 @@
+name: incremental
+version: 0.1.0
+
+authors:
+  - Bar Hofesh <bar.hofesh@gmail.com>
+
+targets:
+  incremental:
+    main: src/incremental.cr
+
+crystal: '>= 1.10.1'
+
+license: MIT
