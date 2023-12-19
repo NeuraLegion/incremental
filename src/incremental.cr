@@ -267,6 +267,14 @@ module Incremental
               @html << ep
             when .includes?("xml")
               @xml << ep
+            when .includes?("json")
+              @apis << ep
+            when .includes?("javascript")
+              @static << ep
+            when .includes?("css")
+              @static << ep
+            when .includes?("text")
+              @static << ep
             else
               @other << ep
             end
