@@ -234,12 +234,16 @@ module Incremental
       @other.clear
 
       count = 0
-      total = @new_urls.size + @vulnerable_urls.size + @tested_urls.size
-      [@new_urls, @vulnerable_urls, @tested_urls].flatten.each do |ep|
+      if skip
+        total = @new_urls.size
+        full = [@new_urls]
+      else
+        total = @new_urls.size + @vulnerable_urls.size + @tested_urls.size
+        full = [@new_urls, @vulnerable_urls, @tested_urls]
+      end
+
+      full.flatten.each do |ep|
         count += 1
-        if skip && ep.status != "new"
-          next
-        end
         if ep.connectivity == "unreachable" || ep.connectivity == "unauthorized"
           next
         end
