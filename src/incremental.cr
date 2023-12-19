@@ -29,7 +29,7 @@ module Incremental
     "open_database",
   ]
 
-  JS_TESTS = [
+  STATIC_TESTS = [
     "cve_test",
     "open_buckets",
     "open_database",
@@ -150,7 +150,7 @@ module Incremental
     @tested_urls : Array(EP) = Array(EP).new
 
     @apis : Array(EP) = Array(EP).new
-    @js : Array(EP) = Array(EP).new
+    @static : Array(EP) = Array(EP).new
     @posts : Array(EP) = Array(EP).new
     @html : Array(EP) = Array(EP).new
     @xml : Array(EP) = Array(EP).new
@@ -197,7 +197,7 @@ module Incremental
       puts "Scanning APIs...".colorize(:blue)
       start_scan(@apis, API_TESTS, "API", ["body", "path", "query"])
       puts "Scanning JS...".colorize(:blue)
-      start_scan(@js, JS_TESTS, "JS")
+      start_scan(@static, STATIC_TESTS, "JS")
       puts "Scanning POSTs...".colorize(:blue)
       start_scan(@posts, POST_TESTS, "POST")
       puts "Scanning HTML...".colorize(:blue)
@@ -227,7 +227,7 @@ module Incremental
     private def evaluate(skip : Bool = false)
       @evaluated = true
       @apis.clear
-      @js.clear
+      @static.clear
       @posts.clear
       @html.clear
       @xml.clear
@@ -241,19 +241,19 @@ module Incremental
           next
         end
         print "\rEvaluating #{count} of #{total} URLs..."
-
+        path = URI.parse(ep.url).path.to_s
         case
-        when ep.url.includes?("/api/")
+        when ep.url.includes?("/api/") || ep.url.includes?("/graphql") || ep.url.includes?("/rest/")
           @apis << ep
-        when URI.parse(ep.url).path.to_s.ends_with?(".js")
-          @js << ep
+        when path.ends_with?(".js") || path.ends_with?(".css") || path.ends_with?(".map")
+          @static << ep
         when (ep.method == "POST" || ep.method == "PUT")
           @posts << ep
         else # This means we need more info on the EP and will have to make another request.
           begin
             res = get("/api/v2/projects/#{@project_id}/entry-points/#{ep.id}")
             ep_obj = JSON.parse(res)
-            case ep_obj["response"]["headers"]["content-type"]?.to_s
+            case ep_obj["response"]["headers"]["Content-Type"]?.to_s
             when .includes?("html")
               @html << ep
             when .includes?("xml")
@@ -269,7 +269,7 @@ module Incremental
       puts "---------------"
       puts "Evaluated".colorize(:green)
       puts "#{@apis.size} APIs"
-      puts "#{@js.size} JS files"
+      puts "#{@static.size} Static files (JS/CSS/etc..)"
       puts "#{@posts.size} POSTs"
       puts "#{@html.size} HTML files."
       puts "#{@xml.size} XML files."
