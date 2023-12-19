@@ -263,6 +263,8 @@ module Incremental
             end
           rescue e : JSON::ParseException
             puts "Error parsing JSON: #{e} - #{res}".colorize(:red)
+          rescue e : Exception
+            puts "Error: #{e}".colorize(:red)
           end
         end
       end
