@@ -170,7 +170,7 @@ module Incremental
         puts "Vulnerable: #{@vulnerable_urls.size}".colorize(:red)
         puts "Tested: #{@tested_urls.size}"
         puts "---------------"
-        puts "[s\\scan] [r\\refresh] [ea\\evaluate all] [en\\evaluate new] [q\\quit]"
+        puts "[s\\scan] [r\\refresh] [ea\\evaluate all] [en\\evaluate new] [lo\\list other] [q\\quit]"
         input = gets.to_s.chomp.downcase
         case input
         when "s", "scan"
@@ -181,6 +181,16 @@ module Incremental
           evaluate
         when "en", "evaluate new"
           evaluate(true)
+        when "lo", "list other"
+          puts "---------------"
+          unless @evaluated
+            puts "You must evaluate the URLs before listing them.".colorize(:red)
+            next
+          end
+          @other.each do |ep|
+            puts "[#{ep.method}] #{ep.url}"
+          end
+          puts "---------------"
         when "q", "quit"
           exit 0
         end
@@ -250,19 +260,22 @@ module Incremental
         print "\rEvaluating #{count} of #{total} URLs..."
         path = URI.parse(ep.url).path.to_s
         case
-        when ep.url.includes?("/api/") || ep.url.includes?("/graphql") || ep.url.includes?("/rest/")
+        when path.includes?("/api/") || path.includes?("/graphql") || path.includes?("/rest/") || path.matches?(/\/v[0-9]+\//)
           @apis << ep
-        when path.ends_with?(".js") || path.ends_with?(".css") || path.ends_with?(".map")
+        when path.ends_with?(".js") || path.ends_with?(".css") || path.ends_with?(".map") || path.ends_with?(".scss") || path.ends_with?(".md")
           @static << ep
         when (ep.method == "POST" || ep.method == "PUT")
           @posts << ep
-        else # This means we need more info on the EP and will have to make another request.
+        when (ep.method == "GET" && URI.parse(ep.url).query.nil? && URI.parse(ep.url).fragment.nil?)
+          @static << ep
+        else # This means we need more info ocrn the EP and will have to make another request.
           begin
             res = get("/api/v2/projects/#{@project_id}/entry-points/#{ep.id}")
             ep_obj = JSON.parse(res)
             response = ep_obj["response"]?
             next unless response
-            case response["headers"]["Content-Type"]?.to_s
+            content_type = (response["headers"]["Content-Type"]? || response["headers"]["content-type"]?).to_s
+            case content_type
             when .includes?("html")
               @html << ep
             when .includes?("xml")
@@ -273,7 +286,11 @@ module Incremental
               @static << ep
             when .includes?("css")
               @static << ep
-            when .includes?("text")
+            when .includes?("plain")
+              @static << ep
+            when .includes?("octet-stream")
+              @static << ep
+            when .includes?("font")
               @static << ep
             else
               @other << ep
@@ -356,6 +373,7 @@ module Incremental
     getter createdAt : String
     getter method : String
     getter connectivity : String
+    getter parametersCount : Int32
   end
 end
 
