@@ -240,6 +240,9 @@ module Incremental
         if skip && ep.status != "new"
           next
         end
+        if ep.connectivity == "unreachable" || ep.connectivity == "unauthorized"
+          next
+        end
         print "\rEvaluating #{count} of #{total} URLs..."
         path = URI.parse(ep.url).path.to_s
         case
@@ -253,7 +256,9 @@ module Incremental
           begin
             res = get("/api/v2/projects/#{@project_id}/entry-points/#{ep.id}")
             ep_obj = JSON.parse(res)
-            case ep_obj["response"]["headers"]["Content-Type"]?.to_s
+            response = ep_obj["response"]?
+            next unless response
+            case response["headers"]["Content-Type"]?.to_s
             when .includes?("html")
               @html << ep
             when .includes?("xml")
@@ -338,6 +343,7 @@ module Incremental
     getter status : String
     getter createdAt : String
     getter method : String
+    getter connectivity : String
   end
 end
 
