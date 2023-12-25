@@ -319,9 +319,9 @@ module Incremental
         next_id = overall_eps[-1]?.try(&.id)
         next_created_at = overall_eps[-1]?.try(&.createdAt)
         if next_id && next_created_at
-          eps = get("/api/v2/projects/#{@project_id}/entry-points?limit=100&moveTo=next&nextId=#{next_id}&nextCreatedAt=#{next_created_at}")
+          eps = get("/api/v2/projects/#{@project_id}/entry-points?limit=500&moveTo=next&nextId=#{next_id}&nextCreatedAt=#{next_created_at}")
         else
-          eps = get("/api/v2/projects/#{@project_id}/entry-points?limit=100")
+          eps = get("/api/v2/projects/#{@project_id}/entry-points?limit=500")
         end
         items = Array(EP).from_json(JSON.parse(eps)["items"].to_json)
         break if items.size == 0
