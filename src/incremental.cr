@@ -222,25 +222,23 @@ module Incremental
 
     private def start_scan(ep : Array(EP), tests : Array(String), type : String, locations : Array(String) = ["body", "fragment", "query"])
       return if ep.empty?
-      
-      request_body = {
-        "tests" => tests,
-        "entryPointIds" => ep.map(&.id),
-        "attackParamLocations" => locations,
-        "projectId" => @project_id,
-        "name" => "Incremental Scan - #{Time.utc} - #{type}",
-      } of String => Array(String) | String
-    
-      # If repeater was chosen then we will set it in the request under the "repeaters" key
-      request_body["repeaters"] = [@repeater_id.not_nil!] if @repeater_id
-    
-      scan_response = get("/api/v1/scans", "POST", body: request_body.to_json)
-      puts request_body
-      puts scan_response
+      response = get(
+        "/api/v1/scans",
+        "POST",
+        body: {
+          tests:                tests,
+          entryPointIds:        ep.map(&.id),
+          attackParamLocations: locations,
+          projectId:            @project_id,
+          name:                 "Incremental Scan - #{Time.utc} - #{type}",
+          repeaters:           @repeater_id ? [@repeater_id.to_s] : nil
+        }.to_json
+      )
+      puts response
     rescue e : JSON::ParseException
       puts "Error when trying to start a scan: #{e}".colorize(:red)
     end
-    
+
     private def evaluate(skip : Bool = false)
       @evaluated = true
       @apis.clear
