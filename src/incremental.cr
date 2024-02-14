@@ -5,7 +5,7 @@ require "http"
 # Incremental is a CLI tool that allows you to smartly make incremental scans
 # using the BrightSec API.
 module Incremental
-  VERSION = "0.1.0"
+  VERSION = "0.2.0"
 
   API_TESTS = [
     "amazon_s3_takeover",
@@ -138,6 +138,7 @@ module Incremental
     @project_id : String
     @api_key : String
     @cluster : String
+    @repeater_id : String?
 
     # This will be a hash of the new URLs found in the scan.
     # We save them as URL -> EP ID.
@@ -158,7 +159,7 @@ module Incremental
 
     @evaluated : Bool = false
 
-    def initialize(@api_key, @project_id, @cluster)
+    def initialize(@api_key, @project_id, @cluster, @repeater_id = nil)
     end
 
     def loop
@@ -220,20 +221,26 @@ module Incremental
     end
 
     private def start_scan(ep : Array(EP), tests : Array(String), type : String, locations : Array(String) = ["body", "fragment", "query"])
-      return if ep.size == 0
-      get(
-        "/api/v1/scans",
-        "POST",
-        body: {
-          tests:                tests,
-          entryPointIds:        ep.map(&.id),
-          attackParamLocations: locations,
-          projectId:            @project_id,
-          name:                 "Incremental Scan - #{Time.utc} - #{type}",
-        }.to_json
-      )
+      return if ep.empty?
+      
+      request_body = {
+        "tests" => tests,
+        "entryPointIds" => ep.map(&.id),
+        "attackParamLocations" => locations,
+        "projectId" => @project_id,
+        "name" => "Incremental Scan - #{Time.utc} - #{type}",
+      } of String => Array(String) | String
+    
+      # If repeater was chosen then we will set it in the request under the "repeaters" key
+      request_body["repeaters"] = [@repeater_id.not_nil!] if @repeater_id
+    
+      scan_response = get("/api/v1/scans", "POST", body: request_body.to_json)
+      puts request_body
+      puts scan_response
+    rescue e : JSON::ParseException
+      puts "Error when trying to start a scan: #{e}".colorize(:red)
     end
-
+    
     private def evaluate(skip : Bool = false)
       @evaluated = true
       @apis.clear
@@ -377,14 +384,39 @@ module Incremental
   end
 end
 
-if ARGV.size < 2
-  puts "Usage: incremental <api_key> <project_id> [cluster - default: app.brightsec.com]"
+# Default values
+api_key = ""
+project_id = ""
+cluster = "app.brightsec.com" # Default cluster
+repeater_id = nil
+
+def is_cluster_format(arg)
+  arg.includes?(".brightsec.com")
+end
+
+case ARGV.size
+when 2
+  api_key, project_id = ARGV
+when 3
+  api_key, project_id, arg3 = ARGV
+  if is_cluster_format(arg3)
+    cluster = arg3
+  else
+    repeater_id = arg3
+  end
+when 4
+  api_key, project_id, arg3, arg4 = ARGV
+  if is_cluster_format(arg3)
+    cluster, repeater_id = arg3, arg4
+  else
+    puts "Please make sure you use the right cluster before starting a scan. Eg. app.brightsec.com / eu.brightsec.com".colorize(:red)
+    exit 1
+  end
+else
+  puts "Incorrect number of arguments."
+  puts "Usage: script <api_key> <project_id> [cluster(default: app.brightsec.com)] [repeater_id]"
   exit 1
 end
 
-api_key = ARGV[0]
-project_id = ARGV[1]
-cluster = ARGV[2]? || "app.brightsec.com"
-
-scan = Incremental::Scan.new(api_key, project_id, cluster)
+scan = Incremental::Scan.new(api_key, project_id, cluster, repeater_id)
 scan.loop
