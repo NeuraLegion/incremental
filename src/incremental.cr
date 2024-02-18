@@ -165,7 +165,7 @@ module Incremental
     def loop
       populate
       loop do
-        puts "Project Summary"
+        puts "\nProject Summary"
         puts "---------------"
         puts "New: #{@new_urls.size}".colorize(:green)
         puts "Vulnerable: #{@vulnerable_urls.size}".colorize(:red)
@@ -234,7 +234,6 @@ module Incremental
           repeaters:           @repeater_id ? [@repeater_id.to_s] : nil
         }.to_json
       )
-      puts response
     rescue e : JSON::ParseException
       puts "Error when trying to start a scan: #{e}".colorize(:red)
     end
@@ -412,7 +411,8 @@ when 4
   end
 else
   puts "Incorrect number of arguments."
-  puts "Usage: script <api_key> <project_id> [cluster(default: app.brightsec.com)] [repeater_id]"
+  puts "Usage: incremental <api_key> <project_id> [cluster(default: app.brightsec.com)] [repeater_id]"
+  puts "Example: incremental my-project-api-key my-project-id eu.brightsec.com my-repeater-id"
   exit 1
 end
 
