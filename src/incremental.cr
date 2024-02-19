@@ -5,7 +5,7 @@ require "http"
 # Incremental is a CLI tool that allows you to smartly make incremental scans
 # using the BrightSec API.
 module Incremental
-  VERSION = "0.1.0"
+  VERSION = "0.2.0"
 
   API_TESTS = [
     "amazon_s3_takeover",
@@ -138,6 +138,7 @@ module Incremental
     @project_id : String
     @api_key : String
     @cluster : String
+    @repeater_id : String?
 
     # This will be a hash of the new URLs found in the scan.
     # We save them as URL -> EP ID.
@@ -158,13 +159,13 @@ module Incremental
 
     @evaluated : Bool = false
 
-    def initialize(@api_key, @project_id, @cluster)
+    def initialize(@api_key, @project_id, @cluster, @repeater_id = nil)
     end
 
     def loop
       populate
       loop do
-        puts "Project Summary"
+        puts "\nProject Summary"
         puts "---------------"
         puts "New: #{@new_urls.size}".colorize(:green)
         puts "Vulnerable: #{@vulnerable_urls.size}".colorize(:red)
@@ -220,8 +221,8 @@ module Incremental
     end
 
     private def start_scan(ep : Array(EP), tests : Array(String), type : String, locations : Array(String) = ["body", "fragment", "query"])
-      return if ep.size == 0
-      get(
+      return if ep.empty?
+      response = get(
         "/api/v1/scans",
         "POST",
         body: {
@@ -230,8 +231,11 @@ module Incremental
           attackParamLocations: locations,
           projectId:            @project_id,
           name:                 "Incremental Scan - #{Time.utc} - #{type}",
+          repeaters:           @repeater_id ? [@repeater_id.to_s] : nil
         }.to_json
       )
+    rescue e : JSON::ParseException
+      puts "Error when trying to start a scan: #{e}".colorize(:red)
     end
 
     private def evaluate(skip : Bool = false)
@@ -377,14 +381,40 @@ module Incremental
   end
 end
 
-if ARGV.size < 2
-  puts "Usage: incremental <api_key> <project_id> [cluster - default: app.brightsec.com]"
+# Default values
+api_key = ""
+project_id = ""
+cluster = "app.brightsec.com" # Default cluster
+repeater_id = nil
+
+def is_cluster_format(arg)
+  arg.includes?(".brightsec.com")
+end
+
+case ARGV.size
+when 2
+  api_key, project_id = ARGV
+when 3
+  api_key, project_id, arg3 = ARGV
+  if is_cluster_format(arg3)
+    cluster = arg3
+  else
+    repeater_id = arg3
+  end
+when 4
+  api_key, project_id, arg3, arg4 = ARGV
+  if is_cluster_format(arg3)
+    cluster, repeater_id = arg3, arg4
+  else
+    puts "Please make sure you use the right cluster before starting a scan. Eg. app.brightsec.com / eu.brightsec.com".colorize(:red)
+    exit 1
+  end
+else
+  puts "Incorrect number of arguments."
+  puts "Usage: incremental <api_key> <project_id> [cluster(default: app.brightsec.com)] [repeater_id]"
+  puts "Example: incremental my-project-api-key my-project-id eu.brightsec.com my-repeater-id"
   exit 1
 end
 
-api_key = ARGV[0]
-project_id = ARGV[1]
-cluster = ARGV[2]? || "app.brightsec.com"
-
-scan = Incremental::Scan.new(api_key, project_id, cluster)
+scan = Incremental::Scan.new(api_key, project_id, cluster, repeater_id)
 scan.loop

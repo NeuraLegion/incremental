@@ -51,3 +51,4 @@ docker run -it incremental <api_key> <project_id> [cluster - default: app.bright
 ## Contributors
 
 - [Bar Hofesh](https://github.com/bararchy) - creator and maintainer
+- [Dor Shaer](https://github.com/dorshaer) - maintainer
