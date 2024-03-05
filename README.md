@@ -28,7 +28,16 @@ Tested: 0
 
 ## Usage
 
-`Usage: incremental <api_key> <project_id> [cluster - default: app.brightsec.com]`
+```bash
+Usage: incremental <api_key> <project_id> [cluster(default: app.brightsec.com)] [repeater_id]
+    -k KEY, --api-key=KEY            API Key
+    -p PROJECT, --project-id=PROJECT Project ID
+    -c CLUSTER, --cluster=CLUSTER    Cluster
+    -r REPEATER, --repeater-id=REPEATER
+                                     Repeater ID
+    -h, --help                       Show this help
+    -v, --version                    Show version
+```
 
 ### Docker usage
 
@@ -37,7 +46,7 @@ Tested: 0
 3. `docker build -t incremental .`
 
 ```bash
-docker run -it incremental <api_key> <project_id> [cluster - default: app.brightsec.com]
+docker run -it incremental -k <api_key> -p <project_id> -c <cluster> -r <repeater_id>
 ```
 
 ## Contributing
