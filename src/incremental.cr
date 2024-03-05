@@ -1,6 +1,7 @@
 require "json"
 require "colorize"
 require "http"
+require "option_parser"
 
 # Incremental is a CLI tool that allows you to smartly make incremental scans
 # using the BrightSec API.
@@ -231,7 +232,7 @@ module Incremental
           attackParamLocations: locations,
           projectId:            @project_id,
           name:                 "Incremental Scan - #{Time.utc} - #{type}",
-          repeaters:           @repeater_id ? [@repeater_id.to_s] : nil
+          repeaters:            @repeater_id ? [@repeater_id.to_s] : nil,
         }.to_json
       )
     rescue e : JSON::ParseException
@@ -391,28 +392,27 @@ def is_cluster_format(arg)
   arg.includes?(".brightsec.com")
 end
 
-case ARGV.size
-when 2
-  api_key, project_id = ARGV
-when 3
-  api_key, project_id, arg3 = ARGV
-  if is_cluster_format(arg3)
-    cluster = arg3
-  else
-    repeater_id = arg3
+parsed = OptionParser.parse do |parser|
+  parser.banner = "Usage: incremental <api_key> <project_id> [cluster(default: app.brightsec.com)] [repeater_id]"
+  parser.on("-k KEY", "--api-key=KEY", "API Key") { |v| api_key = v }
+  parser.on("-p PROJECT", "--project-id=PROJECT", "Project ID") { |v| project_id = v }
+  parser.on("-c CLUSTER", "--cluster=CLUSTER", "Cluster") do |v|
+    if is_cluster_format(v)
+      cluster = v
+    else
+      puts "Please make sure you use the right cluster before starting a scan. Eg. app.brightsec.com / eu.brightsec.com".colorize(:red)
+      exit 1
+    end
   end
-when 4
-  api_key, project_id, arg3, arg4 = ARGV
-  if is_cluster_format(arg3)
-    cluster, repeater_id = arg3, arg4
-  else
-    puts "Please make sure you use the right cluster before starting a scan. Eg. app.brightsec.com / eu.brightsec.com".colorize(:red)
+  parser.on("-r REPEATER", "--repeater-id=REPEATER", "Repeater ID") { |v| repeater_id = v }
+  parser.on("-h", "--help", "Show this help") do
+    puts parser
     exit 1
   end
-else
-  puts "Incorrect number of arguments."
-  puts "Usage: incremental <api_key> <project_id> [cluster(default: app.brightsec.com)] [repeater_id]"
-  puts "Example: incremental my-project-api-key my-project-id eu.brightsec.com my-repeater-id"
+end
+
+if api_key.empty? || project_id.empty?
+  puts parsed
   exit 1
 end
 
