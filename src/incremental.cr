@@ -6,7 +6,7 @@ require "option_parser"
 # Incremental is a CLI tool that allows you to smartly make incremental scans
 # using the BrightSec API.
 module Incremental
-  VERSION = "0.2.0"
+  VERSION = "0.2.1"
 
   API_TESTS = [
     "amazon_s3_takeover",
@@ -408,6 +408,10 @@ parsed = OptionParser.parse do |parser|
   parser.on("-h", "--help", "Show this help") do
     puts parser
     exit 1
+  end
+  parser.on("-v", "--version", "Show version") do
+    puts Incremental::VERSION
+    exit 0
   end
 end
 
