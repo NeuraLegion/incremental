@@ -389,11 +389,11 @@ cluster = "app.brightsec.com" # Default cluster
 repeater_id = nil
 
 def is_cluster_format(arg)
-  arg.includes?(".brightsec.com")
+  arg.ends_with?(".brightsec.com")
 end
 
 parsed = OptionParser.parse do |parser|
-  parser.banner = "Usage: incremental <api_key> <project_id> [cluster(default: app.brightsec.com)] [repeater_id]"
+  parser.banner = "Usage: incremental -k <api_key> -p <project_id> -c [cluster(default: app.brightsec.com)] -r [repeater_id]"
   parser.on("-k KEY", "--api-key=KEY", "API Key") { |v| api_key = v }
   parser.on("-p PROJECT", "--project-id=PROJECT", "Project ID") { |v| project_id = v }
   parser.on("-c CLUSTER", "--cluster=CLUSTER", "Cluster") do |v|
