@@ -6,7 +6,7 @@ require "option_parser"
 # Incremental is a CLI tool that allows you to smartly make incremental scans
 # using the BrightSec API.
 module Incremental
-  VERSION = "0.2.2"
+  VERSION = "0.2.3"
 
   API_TESTS = [
     "amazon_s3_takeover",
@@ -141,14 +141,17 @@ module Incremental
     @cluster : String
     @repeater_id : String?
 
-    # This will be a hash of the new URLs found in the scan.
     # We save them as URL -> EP ID.
+    # Hash of the new URLs found in the project.
     @new_urls : Array(EP) = Array(EP).new
 
-    # This will be a hash of the vulnerable URLs found in the scan.
+    # Hash of the changed URLs found in the project.
+    @changed_urls : Array(EP) = Array(EP).new
+
+    # Hash of the vulnerable URLs found in the project.
     @vulnerable_urls : Array(EP) = Array(EP).new
 
-    # This will be a hash of the tested URLs found in the scan.
+    # Hash of the tested URLs found in the project.
     @tested_urls : Array(EP) = Array(EP).new
 
     @apis : Array(EP) = Array(EP).new
@@ -169,10 +172,11 @@ module Incremental
         puts "\nProject Summary"
         puts "---------------"
         puts "New: #{@new_urls.size}".colorize(:green)
+        puts "Changed: #{@changed_urls.size}".colorize(:yellow)
         puts "Vulnerable: #{@vulnerable_urls.size}".colorize(:red)
         puts "Tested: #{@tested_urls.size}"
         puts "---------------"
-        puts "[s\\scan] [r\\refresh] [ea\\evaluate all] [en\\evaluate new] [lo\\list other] [q\\quit]"
+        puts "[s\\scan] [r\\refresh] [ea\\evaluate all] [en\\evaluate new & changed] [lo\\list other] [q\\quit]"
         input = gets.to_s.chomp.downcase
         case input
         when "s", "scan"
@@ -181,7 +185,7 @@ module Incremental
           populate
         when "ea", "evaluate all"
           evaluate
-        when "en", "evaluate new"
+        when "en", "evaluate new & changed"
           evaluate(true)
         when "lo", "list other"
           puts "---------------"
@@ -240,7 +244,6 @@ module Incremental
     end
 
     private def evaluate(skip : Bool = false)
-      @evaluated = true
       @apis.clear
       @static.clear
       @posts.clear
@@ -250,8 +253,8 @@ module Incremental
 
       count = 0
       if skip
-        total = @new_urls.size
-        full = [@new_urls]
+        total = @new_urls.size + @changed_urls.size
+        full = [@new_urls, @changed_urls]
       else
         total = @new_urls.size + @vulnerable_urls.size + @tested_urls.size
         full = [@new_urls, @vulnerable_urls, @tested_urls]
@@ -264,15 +267,21 @@ module Incremental
         end
         print "\rEvaluating #{count} of #{total} URLs..."
         path = URI.parse(ep.url).path.to_s
+        # In case statement, order matter.
+        # For example: if the first condition is true, the rest will not be checked or handled.
         case
-        when path.includes?("/api/") || path.includes?("/graphql") || path.includes?("/rest/") || path.matches?(/\/v[0-9]+\//)
-          @apis << ep
         when path.ends_with?(".js") || path.ends_with?(".css") || path.ends_with?(".map") || path.ends_with?(".scss") || path.ends_with?(".md")
           @static << ep
-        when (ep.method == "POST" || ep.method == "PUT")
-          @posts << ep
         when (ep.method == "GET" && URI.parse(ep.url).query.nil? && URI.parse(ep.url).fragment.nil?)
           @static << ep
+        when api?(ep, path)
+          @apis << ep
+          # in case api is also a post/put
+          if(ep.method == "POST" || ep.method == "PUT")
+            @posts << ep
+          end
+        when (ep.method == "POST" || ep.method == "PUT")
+          @posts << ep
         else # This means we need more info ocrn the EP and will have to make another request.
           begin
             res = get("/api/v2/projects/#{@project_id}/entry-points/#{ep.id}")
@@ -307,6 +316,7 @@ module Incremental
           end
         end
       end
+      @evaluated = true
       puts "---------------"
       puts "Evaluated".colorize(:green)
       puts "#{@apis.size} APIs"
@@ -316,6 +326,16 @@ module Incremental
       puts "#{@xml.size} XML files."
       puts "#{@other.size} other."
       puts "---------------"
+    end
+
+    private def api?(ep : EP, path : String) : Bool
+      # TODO: New initiator for API url to catch, for example "-api stgp.example.com, pgo.example.com"
+      # Check conditions
+      if path.includes?("/api/") || path.includes?("/graphql") || path.includes?("/rest/") || path.matches?(/\/v[0-9]+\//)
+        return true
+      end
+      
+      return false
     end
 
     private def populate
@@ -340,6 +360,7 @@ module Incremental
       end
 
       @new_urls.clear
+      @changed_urls.clear
       @vulnerable_urls.clear
       @tested_urls.clear
 
@@ -347,6 +368,8 @@ module Incremental
         case ep.status
         when "new"
           @new_urls << ep
+        when "changed"
+          @changed_urls << ep
         when "vulnerable"
           @vulnerable_urls << ep
         when "tested"
