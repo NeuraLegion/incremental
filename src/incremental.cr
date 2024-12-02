@@ -328,7 +328,7 @@ module Incremental
       puts "---------------"
     end
 
-    private def isAPI(ep : EP, path : String) : Bool
+    private def api?(ep : EP, path : String) : Bool
       # TODO: New initiator for API url to catch, for example "-api stgp.example.com, pgo.example.com"
       # Check conditions
       if path.includes?("/api/") || path.includes?("/graphql") || path.includes?("/rest/") || path.matches?(/\/v[0-9]+\//)
