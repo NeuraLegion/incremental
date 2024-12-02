@@ -274,7 +274,7 @@ module Incremental
           @static << ep
         when (ep.method == "GET" && URI.parse(ep.url).query.nil? && URI.parse(ep.url).fragment.nil?)
           @static << ep
-        when isAPI(ep, path)
+        when api?(ep, path)
           @apis << ep
           # in case api is also a post/put
           if(ep.method == "POST" || ep.method == "PUT")
