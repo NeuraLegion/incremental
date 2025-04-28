@@ -6,7 +6,7 @@ require "option_parser"
 # Incremental is a CLI tool that allows you to smartly make incremental scans
 # using the BrightSec API.
 module Incremental
-  VERSION = "0.2.3"
+  VERSION = "0.2.4"
 
   API_TESTS = [
     "amazon_s3_takeover",
@@ -18,7 +18,6 @@ module Incremental
     "id_enumeration",
     "improper_asset_management",
     "jwt",
-    "mass_assignment",
     "nosql",
     "osi",
     "lfi",
@@ -28,6 +27,7 @@ module Incremental
     "xxe",
     "open_cloud_storage",
     "open_database",
+    "promp_injection",
   ]
 
   STATIC_TESTS = [
@@ -84,7 +84,7 @@ module Incremental
 
   OTHER_TESTS = [
     "amazon_s3_takeover",
-    "bola",
+    "bopla",
     "broken_saml_auth",
     "brute_force_login",
     "business_constraint_bypass",
@@ -108,15 +108,14 @@ module Incremental
     "iframe_injection",
     "improper_asset_management",
     "insecure_tls_configuration",
+    "insecure_output_handling",
     "jwt",
     "ldapi",
     "lfi",
-    "mass_assignment",
     "nosql",
     "open_cloud_storage",
     "open_database",
     "osi",
-    "password_reset_poisoning",
     "prompt_injection",
     "proto_pollution",
     "retire_js",
@@ -161,6 +160,10 @@ module Incremental
     @xml : Array(EP) = Array(EP).new
     @other : Array(EP) = Array(EP).new
 
+    # For hard limit 2k EPs per-scan.
+    @ep_limit : Bool = true
+    # For new BAC test, we ask before executing the scan.
+    @bac_test : Bool = false
     @evaluated : Bool = false
 
     def initialize(@api_key, @project_id, @cluster, @repeater_id = nil)
@@ -180,7 +183,7 @@ module Incremental
         input = gets.to_s.chomp.downcase
         case input
         when "s", "scan"
-          scan
+          ask_about_bac_test
         when "r", "refresh"
           populate
         when "ea", "evaluate all"
@@ -203,11 +206,78 @@ module Incremental
       end
     end
 
-    private def scan
+    private def ask_about_bac_test
       unless @evaluated
         puts "You must evaluate the URLs before scanning them.".colorize(:red)
         return
       end
+      puts "[y\\use BAC test] [n\\dont use BAC test] [b\\back to main] [q\\quit]"
+      input = gets.to_s.chomp.downcase
+      case input
+      when "y", "yes", "use BAC test"
+        get_auth_for_project
+      when "n", "no", "dont", "dont use BAC test"
+        scan
+      when "b", "back", "main"
+        return
+      when "q", "quit"
+        exit 0
+      end
+    end
+
+    private def get_auth_for_project
+      res = get("/api/v3/auth-objects?limit=50&projectId[]=#{@project_id}")
+
+      # "Your account does not have permission to access this resource, to change access permissions please contact your administrator about user roles. Or update the scopes of your API key."
+      # In case the typo change, those three words should still apear
+      if res.includes?("account") && res.includes?("not") && res.includes?("permissions")
+        puts "No permission, using this API key. skip BAC test.".colorize(:yellow)
+        return scan
+      end
+
+      items = Array(AO).from_json(JSON.parse(res)["items"].to_json)
+      select_auth(items)
+    end
+
+    private def select_auth(items : Array(AO))
+      if items.empty?
+        puts "There are no available authentications for this project, skip BAC test.".colorize(:yellow)
+        return scan
+      end
+
+      puts "Select AOs to use (separate by comma or space):"
+      puts "0) No Authentication"
+      items.each_with_index do |ao, idx|
+        puts "#{idx + 1}) ID: #{ao.id})" #     #{ao.name} (Type: #{ao.type}, ID: #{ao.id})"
+      end
+
+      input = gets.to_s.chomp
+      selected_numbers = input.split(/[\s,]+/).map(&.to_i)
+
+      if selected_numbers.size < 2
+        puts "You must select at least two options.".colorize(:red)
+        return select_auth(items)
+      end
+
+      # Validate that selected numbers are within range
+      max_index = items.size
+      unless selected_numbers.all? { |num| num >= 0 && num <= max_index }
+        puts "Invalid selection. Please try again.".colorize(:red)
+        return select_auth(items)
+      end
+
+      puts "You selected: #{selected_numbers.join(", ")}"
+      # # TODO:
+      # # use repeaterRequired and compare the id to the given input.
+      # # add to API_TEST the BAC test -> "tests":["broken_access_control"],
+      # # add the testMetaData parameter ->                         VV For no-ao case.
+      # # "testMetadata":{"broken_access_control":{"authObjectId":[null,"6H6heS89Rhz3f6MpbB5nzb"]}},
+
+      # Temporal skip to scan.
+      scan
+    end
+
+    private def scan
       # Now we will scan all the EPs we have.
       # We use the breaking by type and then we choose the test "buckets" we want to run on them.
       puts "Scanning APIs...".colorize(:blue)
@@ -227,6 +297,16 @@ module Incremental
 
     private def start_scan(ep : Array(EP), tests : Array(String), type : String, locations : Array(String) = ["body", "fragment", "query"])
       return if ep.empty?
+
+      if @ep_limit && ep.size > 2000
+        ep.each_slice(2000) { |chunk| scan_request(chunk, tests, type, locations, true) }
+      else
+        scan_request(ep, tests, type, locations)
+      end
+    end
+
+    private def scan_request(ep : Array(EP), tests : Array(String), type : String, locations : Array(String), isChunk : Bool = false)
+      chunk_tag = isChunk ? "[Chunk]" : ""
       response = get(
         "/api/v1/scans",
         "POST",
@@ -235,7 +315,7 @@ module Incremental
           entryPointIds:        ep.map(&.id),
           attackParamLocations: locations,
           projectId:            @project_id,
-          name:                 "Incremental Scan - #{Time.utc} - #{type}",
+          name:                 "Incremental Scan #{chunk_tag} - #{Time.utc} - #{type}",
           repeaters:            @repeater_id ? [@repeater_id.to_s] : nil,
         }.to_json
       )
@@ -277,7 +357,7 @@ module Incremental
         when api?(ep, path)
           @apis << ep
           # in case api is also a post/put
-          if(ep.method == "POST" || ep.method == "PUT")
+          if (ep.method == "POST" || ep.method == "PUT")
             @posts << ep
           end
         when (ep.method == "POST" || ep.method == "PUT")
@@ -319,9 +399,9 @@ module Incremental
       @evaluated = true
       puts "---------------"
       puts "Evaluated".colorize(:green)
-      puts "#{@apis.size} APIs"
-      puts "#{@static.size} Static files (JS/CSS/etc..)"
-      puts "#{@posts.size} POSTs"
+      puts "#{@apis.size} APIs."
+      puts "#{@static.size} Static files (JS/CSS/etc..)."
+      puts "#{@posts.size} POSTs."
       puts "#{@html.size} HTML files."
       puts "#{@xml.size} XML files."
       puts "#{@other.size} other."
@@ -334,7 +414,7 @@ module Incremental
       if path.includes?("/api/") || path.includes?("/graphql") || path.includes?("/rest/") || path.matches?(/\/v[0-9]+\//)
         return true
       end
-      
+
       return false
     end
 
@@ -403,16 +483,45 @@ module Incremental
     getter connectivity : String
     getter parametersCount : Int32
   end
+
+  struct AO
+    include JSON::Serializable
+    getter id : String
+    getter repeaterRequired : Bool
+    getter name : String
+    getter type : String
+  end
 end
 
 # Default values
-api_key = ""
-project_id = ""
-cluster = "app.brightsec.com" # Default cluster
-repeater_id = nil
+api_key : String = ""
+project_id : String = ""
+cluster : String = "app.brightsec.com" # Default cluster
+repeater_id : String? = nil
 
-def is_cluster_format(arg)
+def cluster_format?(arg) : Bool
   arg.ends_with?(".brightsec.com")
+end
+
+def api_key_connect?(api_key : String, project_id : String, cluster : String) : Bool
+  path = "api/v1/projects/#{project_id}"
+  uri = URI.parse("https://#{cluster}/#{path.lstrip("/")}")
+
+  response = HTTP::Client.exec(
+    method: "GET",
+    url: uri,
+    headers: HTTP::Headers{
+      "Authorization" => "Api-Key #{api_key}",
+      "Content-Type"  => "application/json",
+      "Accept"        => "application/json",
+    },
+    body: ""
+  )
+  unless response.status_code == 200
+    puts "Response Status Code: #{response.status_code}"
+    puts "Response Body: #{response.body.to_s}"
+  end
+  return response.status_code == 200
 end
 
 parsed = OptionParser.parse do |parser|
@@ -420,7 +529,7 @@ parsed = OptionParser.parse do |parser|
   parser.on("-k KEY", "--api-key=KEY", "API Key") { |v| api_key = v }
   parser.on("-p PROJECT", "--project-id=PROJECT", "Project ID") { |v| project_id = v }
   parser.on("-c CLUSTER", "--cluster=CLUSTER", "Cluster") do |v|
-    if is_cluster_format(v)
+    if cluster_format?(v)
       cluster = v
     else
       puts "Please make sure you use the right cluster before starting a scan. Eg. app.brightsec.com / eu.brightsec.com".colorize(:red)
@@ -440,6 +549,11 @@ end
 
 if api_key.empty? || project_id.empty?
   puts parsed
+  exit 1
+end
+
+unless api_key_connect?(api_key, project_id, cluster)
+  puts "Please check the api-key and make sure you use the right cluster before starting a scan. Eg. app.brightsec.com / eu.brightsec.com".colorize(:red)
   exit 1
 end
 
