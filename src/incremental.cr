@@ -135,6 +135,14 @@ module Incremental
     "xxe",
   ]
 
+  STATIC_EXTENSIONS = [
+    ".js",
+    ".css",
+    ".map",
+    ".scss",
+    ".md",
+  ]
+
   class Scan
     # Default values
     @project_id : String
@@ -210,6 +218,10 @@ module Incremental
         return
       end
 
+      if @apis.empty?
+        return scan # default to normal scan without BAC test
+      end
+
       # Check if the BAC test contain any elements.
       unless bac = @bac_aos
         return scan # default to normal scan without BAC test
@@ -232,7 +244,7 @@ module Incremental
       puts "Adding BAC test with AOs: #{bac.join(", ")}".colorize(:green)
 
       api_tests = API_TESTS.dup
-      api_tests << "broken_access_control" # Add BAC test to the API tests.
+      api_tests << "broken_access_control"
       puts "Scanning APIs...".colorize(:blue)
       start_scan(@apis, api_tests, "API", ["body", "path", "query"])
       scan(true)
@@ -240,20 +252,30 @@ module Incremental
 
     private def scan(skip_api_scan : Bool = false)
       # We use the breaking by type and then we choose the test "buckets" we want to run on them.
-      unless skip_api_scan
+      unless skip_api_scan && @apis.empty?
         puts "Scanning APIs...".colorize(:blue)
         start_scan(@apis, API_TESTS, "API", ["body", "path", "query"])
       end
-      puts "Scanning JS...".colorize(:blue)
-      start_scan(@static, STATIC_TESTS, "JS")
-      puts "Scanning POSTs...".colorize(:blue)
-      start_scan(@posts, POST_TESTS, "POST")
-      puts "Scanning HTML...".colorize(:blue)
-      start_scan(@html, HTML_TESTS, "HTML")
-      puts "Scanning XML...".colorize(:blue)
-      start_scan(@xml, XML_TESTS, "XML")
-      puts "Scanning other...".colorize(:blue)
-      start_scan(@other, OTHER_TESTS, "OTHER")
+      unless @static.empty?
+        puts "Scanning Static...".colorize(:blue)
+        start_scan(@static, STATIC_TESTS, "STATIC")
+      end
+      unless @posts.empty?
+        puts "Scanning POSTs...".colorize(:blue)
+        start_scan(@posts, POST_TESTS, "POST")
+      end
+      unless @html.empty?
+        puts "Scanning HTML...".colorize(:blue)
+        start_scan(@html, HTML_TESTS, "HTML")
+      end
+      unless @xml.empty?
+        puts "Scanning XML...".colorize(:blue)
+        start_scan(@xml, XML_TESTS, "XML")
+      end
+      unless @other.empty?
+        puts "Scanning other...".colorize(:blue)
+        start_scan(@other, OTHER_TESTS, "OTHER")
+      end
       puts "Done spawning scans".colorize(:green)
     end
 
@@ -268,7 +290,7 @@ module Incremental
     end
 
     private def scan_request(ep : Array(EP), tests : Array(String), type : String, locations : Array(String), isChunk : Bool = false)
-      chunk_tag = isChunk ? "[Chunk]" : ""
+      chunk_tag = isChunk ? "[Chunk] " : ""
       body = {
         tests:                tests,
         entryPointIds:        ep.map(&.id),
@@ -286,15 +308,11 @@ module Incremental
             },
           }
           body = body.merge({testMetadata: test_metadata})
-          debug("Request body: #{body.to_json}")
         end
       end
 
-      response = get(
-        "/api/v1/scans",
-        "POST",
-        body: body.to_json
-      )
+      response = get("/api/v1/scans", "POST", body: body.to_json)
+      debug("Request body: #{body.to_json}")
       debug("Response: #{response}")
     rescue e : JSON::ParseException
       puts "Error when trying to start a scan: #{e}".colorize(:red)
@@ -348,12 +366,7 @@ module Incremental
         found_tests = true
       end
 
-      if path.ends_with?(".js") || path.ends_with?(".css") || path.ends_with?(".map") || path.ends_with?(".scss") || path.ends_with?(".md")
-        @static << ep
-        found_tests = true
-      end
-
-      if ep.method == "GET" && URI.parse(ep.url).query.nil? && URI.parse(ep.url).fragment.nil?
+      if STATIC_EXTENSIONS.any? { |ext| path.ends_with?(ext) } || ep.method == "GET" && URI.parse(ep.url).query.nil? && URI.parse(ep.url).fragment.nil?
         @static << ep
         found_tests = true
       end
@@ -399,6 +412,12 @@ module Incremental
     end
 
     private def api?(ep : EP, path : String) : Bool
+      # Normal check conditions
+      if path.includes?("/api/") || path.includes?("/graphql") || path.includes?("/rest/") || path.matches?(/\/v[0-9]+\//)
+        return true
+      end
+
+      # Check if the URL is a valid API URL.
       if domains = @api_domains
         domains.any? do |domain|
           begin
@@ -406,7 +425,7 @@ module Incremental
             base = "#{uri.host}#{uri.port ? ":#{uri.port}" : ""}"
             match = base.starts_with?(domain) || base == domain
             debug("API domain check: #{base} against #{domain} - #{match ? "matched" : "no match"}")
-            if match
+            if match # this must be like this otherwise we will fail query params.
               return true
             end
           rescue e : Exception
@@ -414,11 +433,6 @@ module Incremental
             false
           end
         end
-      end
-
-      # Normal check conditions
-      if path.includes?("/api/") || path.includes?("/graphql") || path.includes?("/rest/") || path.matches?(/\/v[0-9]+\//)
-        return true
       end
 
       return false
@@ -535,24 +549,35 @@ def api_key_connect?(api_key : String, project_id : String, cluster : String) : 
 end
 
 parser = OptionParser.parse do |parser|
-  parser.banner = "Usage: incremental -k <api_key> -p <project_id> -c [cluster(default: app.brightsec.com)] -r [repeater_id]"
-  parser.on("-k KEY", "--api-key=KEY", "API Key") { |v| api_key = v }
-  parser.on("-p PROJECT", "--project-id=PROJECT", "Project ID") { |v| project_id = v }
-  parser.on("-c CLUSTER", "--cluster=CLUSTER", "Cluster") do |v|
+  parser.banner = "Usage: incremental -k <api_key> -p <project_id> [OPTIONS]"
+  parser.separator("\nRequired arguments:")
+  parser.on("-k KEY", "--api-key=KEY", "Your Bright API Key") { |v| api_key = v }
+  parser.on("-p PROJECT", "--project-id=PROJECT", "Bright Project ID") { |v| project_id = v }
+
+  parser.separator("\nOptional arguments:")
+  parser.on("-c CLUSTER", "--cluster=CLUSTER", "Bright cluster (default: app.brightsec.com)") do |v|
     if cluster_format?(v)
       cluster = v
     else
-      puts "Please make sure you use the right cluster before starting a scan. Eg. app.brightsec.com / eu.brightsec.com".colorize(:red)
+      puts "Invalid cluster format: #{v}".colorize(:red)
+      puts "Please use a valid cluster like app.brightsec.com or eu.brightsec.com".colorize(:yellow)
       exit 1
     end
   end
-  parser.on("-r REPEATER", "--repeater-id=REPEATER", "Repeater ID") { |v| repeater_id = v }
-  parser.on("-a DOMAIN", "--api-domains=DOMAIN", "API Domains") { |v| api_domains = v.split(",") }
-  parser.on("-b AO", "--bac_aos=AO", "BAC AOs") { |v| bac_aos = v.split(",") }
-
+  parser.on("-r REPEATER", "--repeater-id=REPEATER", "ID of your Bright repeater") { |v| repeater_id = v }
+  parser.on("-a DOMAINS", "--api-domains=DOMAINS", "Comma-separated list of API domains (helps identify API endpoints)") { |v| api_domains = v.split(",") }
+  parser.on("-b AOS", "--bac-aos=AOS", "Comma-separated list of Auth Objects (for testing BAC vulnerabilities)") { |v| bac_aos = v.split(",") }
   parser.on("-h", "--help", "Show this help") do
     puts parser
-    exit 1
+    puts "\nExamples:".colorize(:green)
+    puts "  Basic scan:".colorize(:yellow)
+    puts "    incremental -k orgSercretKey -p projectID"
+    puts "  Advanced scan with repeater:".colorize(:yellow)
+    puts "    incremental -k orgSercretKey -p projectID -r myRepeaterId -c eu.brightsec.com"
+    puts "  API-focused scan:".colorize(:yellow)
+    puts "    incremental -k orgSercretKey -p projectID -a api.example.com,aapiexample.com:7777"
+    puts ""
+    exit 0
   end
   parser.on("-v", "--version", "Show version") do
     puts Incremental::VERSION
