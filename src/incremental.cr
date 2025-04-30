@@ -10,6 +10,7 @@ module Incremental
 
   API_TESTS = [
     "amazon_s3_takeover",
+    "bopla",
     "business_constraint_bypass",
     "date_manipulation",
     "file_upload",
@@ -135,24 +136,23 @@ module Incremental
   ]
 
   class Scan
+    # Default values
     @project_id : String
     @api_key : String
     @cluster : String
+    # Optional values
     @repeater_id : String?
+    @api_domains : Array(String)? # Array of domains for the API test.
+    @bac_aos : Array(String)?     # Array of AOs for the BAC test.
 
-    # We save them as URL -> EP ID.
-    # Hash of the new URLs found in the project.
+    # Hash of the EP status found in the project.
     @new_urls : Array(EP) = Array(EP).new
-
-    # Hash of the changed URLs found in the project.
     @changed_urls : Array(EP) = Array(EP).new
-
-    # Hash of the vulnerable URLs found in the project.
     @vulnerable_urls : Array(EP) = Array(EP).new
-
-    # Hash of the tested URLs found in the project.
     @tested_urls : Array(EP) = Array(EP).new
 
+    # Buckets for the different types of EPs.
+    # We will use these to scan them with the right tests.
     @apis : Array(EP) = Array(EP).new
     @static : Array(EP) = Array(EP).new
     @posts : Array(EP) = Array(EP).new
@@ -160,13 +160,11 @@ module Incremental
     @xml : Array(EP) = Array(EP).new
     @other : Array(EP) = Array(EP).new
 
-    # For hard limit 2k EPs per-scan.
-    @ep_limit : Bool = true
-    # For new BAC test, we ask before executing the scan.
-    @bac_test : Bool = false
+    @debug : Bool = false   # For debugging purposes to console.
+    @ep_limit : Bool = true # For hard limit 2k EPs per-scan.
     @evaluated : Bool = false
 
-    def initialize(@api_key, @project_id, @cluster, @repeater_id = nil)
+    def initialize(@api_key, @project_id, @cluster, @repeater_id = nil, @api_domains = nil, @bac_aos = nil)
     end
 
     def loop
@@ -183,7 +181,7 @@ module Incremental
         input = gets.to_s.chomp.downcase
         case input
         when "s", "scan"
-          ask_about_bac_test
+          setup_bac_test
         when "r", "refresh"
           populate
         when "ea", "evaluate all"
@@ -206,82 +204,46 @@ module Incremental
       end
     end
 
-    private def ask_about_bac_test
+    private def setup_bac_test
       unless @evaluated
         puts "You must evaluate the URLs before scanning them.".colorize(:red)
         return
       end
-      puts "[y\\use BAC test] [n\\dont use BAC test] [b\\back to main] [q\\quit]"
-      input = gets.to_s.chomp.downcase
-      case input
-      when "y", "yes", "use BAC test"
-        get_auth_for_project
-      when "n", "no", "dont", "dont use BAC test"
-        scan
-      when "b", "back", "main"
-        return
-      when "q", "quit"
-        exit 0
+
+      # Check if the BAC test contain any elements.
+      unless bac = @bac_aos
+        return scan # default to normal scan without BAC test
       end
-    end
 
-    private def get_auth_for_project
-      res = get("/api/v3/auth-objects?limit=50&projectId[]=#{@project_id}")
-
-      # "Your account does not have permission to access this resource, to change access permissions please contact your administrator about user roles. Or update the scopes of your API key."
-      # In case the typo change, those three words should still apear
-      if res.includes?("account") && res.includes?("not") && res.includes?("permissions")
-        puts "No permission, using this API key. skip BAC test.".colorize(:yellow)
+      unless bac.size > 1
+        puts "BAC test requires at least 2 AOs.".colorize(:red)
+        puts "Run scan without BAC test.".colorize(:yellow)
         return scan
       end
 
-      items = Array(AO).from_json(JSON.parse(res)["items"].to_json)
-      select_auth(items)
-    end
-
-    private def select_auth(items : Array(AO))
-      if items.empty?
-        puts "There are no available authentications for this project, skip BAC test.".colorize(:yellow)
-        return scan
+      # Validate AO format - can be "null" or Bright UUID.
+      bac.each do |ao|
+        unless ao == "null" || ao.matches?(/^[a-zA-Z0-9]+$/)
+          puts "Invalid AO format: #{ao}. Must be 'null' or alphanumeric.".colorize(:red)
+          return
+        end
       end
 
-      puts "Select AOs to use (separate by comma or space):"
-      puts "0) No Authentication"
-      items.each_with_index do |ao, idx|
-        puts "#{idx + 1}) ID: #{ao.id})" #     #{ao.name} (Type: #{ao.type}, ID: #{ao.id})"
-      end
+      puts "Adding BAC test with AOs: #{bac.join(", ")}".colorize(:green)
 
-      input = gets.to_s.chomp
-      selected_numbers = input.split(/[\s,]+/).map(&.to_i)
-
-      if selected_numbers.size < 2
-        puts "You must select at least two options.".colorize(:red)
-        return select_auth(items)
-      end
-
-      # Validate that selected numbers are within range
-      max_index = items.size
-      unless selected_numbers.all? { |num| num >= 0 && num <= max_index }
-        puts "Invalid selection. Please try again.".colorize(:red)
-        return select_auth(items)
-      end
-
-      puts "You selected: #{selected_numbers.join(", ")}"
-      # # TODO:
-      # # use repeaterRequired and compare the id to the given input.
-      # # add to API_TEST the BAC test -> "tests":["broken_access_control"],
-      # # add the testMetaData parameter ->                         VV For no-ao case.
-      # # "testMetadata":{"broken_access_control":{"authObjectId":[null,"6H6heS89Rhz3f6MpbB5nzb"]}},
-
-      # Temporal skip to scan.
-      scan
-    end
-
-    private def scan
-      # Now we will scan all the EPs we have.
-      # We use the breaking by type and then we choose the test "buckets" we want to run on them.
+      api_tests = API_TESTS.dup
+      api_tests << "broken_access_control" # Add BAC test to the API tests.
       puts "Scanning APIs...".colorize(:blue)
-      start_scan(@apis, API_TESTS, "API", ["body", "path", "query"])
+      start_scan(@apis, api_tests, "API", ["body", "path", "query"])
+      scan(true)
+    end
+
+    private def scan(skip_api_scan : Bool = false)
+      # We use the breaking by type and then we choose the test "buckets" we want to run on them.
+      unless skip_api_scan
+        puts "Scanning APIs...".colorize(:blue)
+        start_scan(@apis, API_TESTS, "API", ["body", "path", "query"])
+      end
       puts "Scanning JS...".colorize(:blue)
       start_scan(@static, STATIC_TESTS, "JS")
       puts "Scanning POSTs...".colorize(:blue)
@@ -307,18 +269,33 @@ module Incremental
 
     private def scan_request(ep : Array(EP), tests : Array(String), type : String, locations : Array(String), isChunk : Bool = false)
       chunk_tag = isChunk ? "[Chunk]" : ""
+      body = {
+        tests:                tests,
+        entryPointIds:        ep.map(&.id),
+        attackParamLocations: locations,
+        projectId:            @project_id,
+        name:                 "Incremental Scan #{chunk_tag}- #{Time.utc} - #{type}",
+        repeaters:            @repeater_id ? [@repeater_id.to_s] : nil,
+      }
+
+      if bac = @bac_aos
+        if type == "API" && tests.includes?("broken_access_control")
+          test_metadata = {
+            "broken_access_control" => {
+              "authObjectId" => bac.map { |ao| ao == "null" ? nil : ao },
+            },
+          }
+          body = body.merge({testMetadata: test_metadata})
+          debug("Request body: #{body.to_json}")
+        end
+      end
+
       response = get(
         "/api/v1/scans",
         "POST",
-        body: {
-          tests:                tests,
-          entryPointIds:        ep.map(&.id),
-          attackParamLocations: locations,
-          projectId:            @project_id,
-          name:                 "Incremental Scan #{chunk_tag} - #{Time.utc} - #{type}",
-          repeaters:            @repeater_id ? [@repeater_id.to_s] : nil,
-        }.to_json
+        body: body.to_json
       )
+      debug("Response: #{response}")
     rescue e : JSON::ParseException
       puts "Error when trying to start a scan: #{e}".colorize(:red)
     end
@@ -336,65 +313,18 @@ module Incremental
         total = @new_urls.size + @changed_urls.size
         full = [@new_urls, @changed_urls]
       else
-        total = @new_urls.size + @vulnerable_urls.size + @tested_urls.size
-        full = [@new_urls, @vulnerable_urls, @tested_urls]
+        total = @new_urls.size + @changed_urls.size + @vulnerable_urls.size + @tested_urls.size
+        full = [@new_urls, @changed_urls, @vulnerable_urls, @tested_urls]
       end
 
       full.flatten.each do |ep|
         count += 1
         if ep.connectivity == "unreachable" || ep.connectivity == "unauthorized"
+          debug("Skipping: #{ep.url} - #{ep.connectivity}")
           next
         end
         print "\rEvaluating #{count} of #{total} URLs..."
-        path = URI.parse(ep.url).path.to_s
-        # In case statement, order matter.
-        # For example: if the first condition is true, the rest will not be checked or handled.
-        case
-        when path.ends_with?(".js") || path.ends_with?(".css") || path.ends_with?(".map") || path.ends_with?(".scss") || path.ends_with?(".md")
-          @static << ep
-        when (ep.method == "GET" && URI.parse(ep.url).query.nil? && URI.parse(ep.url).fragment.nil?)
-          @static << ep
-        when api?(ep, path)
-          @apis << ep
-          # in case api is also a post/put
-          if (ep.method == "POST" || ep.method == "PUT")
-            @posts << ep
-          end
-        when (ep.method == "POST" || ep.method == "PUT")
-          @posts << ep
-        else # This means we need more info ocrn the EP and will have to make another request.
-          begin
-            res = get("/api/v2/projects/#{@project_id}/entry-points/#{ep.id}")
-            ep_obj = JSON.parse(res)
-            response = ep_obj["response"]?
-            next unless response
-            content_type = (response["headers"]["Content-Type"]? || response["headers"]["content-type"]?).to_s
-            case content_type
-            when .includes?("html")
-              @html << ep
-            when .includes?("xml")
-              @xml << ep
-            when .includes?("json")
-              @apis << ep
-            when .includes?("javascript")
-              @static << ep
-            when .includes?("css")
-              @static << ep
-            when .includes?("plain")
-              @static << ep
-            when .includes?("octet-stream")
-              @static << ep
-            when .includes?("font")
-              @static << ep
-            else
-              @other << ep
-            end
-          rescue e : JSON::ParseException
-            puts "Error parsing JSON: #{e} - #{res}".colorize(:red)
-          rescue e : Exception
-            puts "Error: #{e}".colorize(:red)
-          end
-        end
+        select_tests(ep)
       end
       @evaluated = true
       puts "---------------"
@@ -408,9 +338,85 @@ module Incremental
       puts "---------------"
     end
 
+    private def select_tests(ep : EP)
+      found_tests = false
+      path = URI.parse(ep.url).path.to_s
+      debug("Evaluating: #{ep.url} - #{path}")
+
+      if api?(ep, path)
+        @apis << ep
+        found_tests = true
+      end
+
+      if path.ends_with?(".js") || path.ends_with?(".css") || path.ends_with?(".map") || path.ends_with?(".scss") || path.ends_with?(".md")
+        @static << ep
+        found_tests = true
+      end
+
+      if ep.method == "GET" && URI.parse(ep.url).query.nil? && URI.parse(ep.url).fragment.nil?
+        @static << ep
+        found_tests = true
+      end
+
+      if ep.method == "POST" || ep.method == "PUT"
+        @posts << ep
+        found_tests = true
+      end
+
+      unless found_tests # This means we need more info ocrn the EP and will have to make another request.
+        begin
+          res = get("/api/v2/projects/#{@project_id}/entry-points/#{ep.id}")
+          ep_obj = JSON.parse(res)
+          response = ep_obj["response"]?
+          return unless response
+          content_type = (response["headers"]["Content-Type"]? || response["headers"]["content-type"]?).to_s
+          case content_type
+          when .includes?("html")
+            @html << ep
+          when .includes?("xml")
+            @xml << ep
+          when .includes?("json")
+            @apis << ep
+          when .includes?("javascript")
+            @static << ep
+          when .includes?("css")
+            @static << ep
+          when .includes?("plain")
+            @static << ep
+          when .includes?("octet-stream")
+            @static << ep
+          when .includes?("font")
+            @static << ep
+          else
+            @other << ep
+          end
+        rescue e : JSON::ParseException
+          puts "Error parsing JSON: #{e} - #{res}".colorize(:red)
+        rescue e : Exception
+          puts "Error: #{e}".colorize(:red)
+        end
+      end
+    end
+
     private def api?(ep : EP, path : String) : Bool
-      # TODO: New initiator for API url to catch, for example "-api stgp.example.com, pgo.example.com"
-      # Check conditions
+      if domains = @api_domains
+        domains.any? do |domain|
+          begin
+            uri = URI.parse(ep.url)
+            base = "#{uri.host}#{uri.port ? ":#{uri.port}" : ""}"
+            match = base.starts_with?(domain) || base == domain
+            debug("API domain check: #{base} against #{domain} - #{match ? "matched" : "no match"}")
+            if match
+              return true
+            end
+          rescue e : Exception
+            debug("URL parse error: #{ep.url} - #{e.message}")
+            false
+          end
+        end
+      end
+
+      # Normal check conditions
       if path.includes?("/api/") || path.includes?("/graphql") || path.includes?("/rest/") || path.matches?(/\/v[0-9]+\//)
         return true
       end
@@ -471,6 +477,15 @@ module Incremental
         body: body
       ).body.to_s
     end
+
+    private def debug(*messages)
+      return unless @debug
+
+      timestamp = Time.utc.to_s("%H:%M:%S")
+      messages.each do |message|
+        puts "[DEBUG][#{timestamp}] #{message}".colorize(:cyan)
+      end
+    end
   end
 
   struct EP
@@ -483,24 +498,19 @@ module Incremental
     getter connectivity : String
     getter parametersCount : Int32
   end
-
-  struct AO
-    include JSON::Serializable
-    getter id : String
-    getter repeaterRequired : Bool
-    getter name : String
-    getter type : String
-  end
 end
 
 # Default values
 api_key : String = ""
 project_id : String = ""
-cluster : String = "app.brightsec.com" # Default cluster
-repeater_id : String? = nil
+# Optional values
+cluster : String = "app.brightsec.com" # Default cluster can be switched with eu.brightsec.com
+repeater_id : String? = nil            # Repeater ID
+api_domains : Array(String)? = nil     # Array of domains for the API test.
+bac_aos : Array(String)? = nil         # Array of AOs for the BAC test.
 
 def cluster_format?(arg) : Bool
-  arg.ends_with?(".brightsec.com")
+  arg.ends_with?(".brightsec.com") && (arg.starts_with?("app.") || arg.starts_with?("eu."))
 end
 
 def api_key_connect?(api_key : String, project_id : String, cluster : String) : Bool
@@ -524,7 +534,7 @@ def api_key_connect?(api_key : String, project_id : String, cluster : String) : 
   return response.status_code == 200
 end
 
-parsed = OptionParser.parse do |parser|
+parser = OptionParser.parse do |parser|
   parser.banner = "Usage: incremental -k <api_key> -p <project_id> -c [cluster(default: app.brightsec.com)] -r [repeater_id]"
   parser.on("-k KEY", "--api-key=KEY", "API Key") { |v| api_key = v }
   parser.on("-p PROJECT", "--project-id=PROJECT", "Project ID") { |v| project_id = v }
@@ -537,6 +547,9 @@ parsed = OptionParser.parse do |parser|
     end
   end
   parser.on("-r REPEATER", "--repeater-id=REPEATER", "Repeater ID") { |v| repeater_id = v }
+  parser.on("-a DOMAIN", "--api-domains=DOMAIN", "API Domains") { |v| api_domains = v.split(",") }
+  parser.on("-b AO", "--bac_aos=AO", "BAC AOs") { |v| bac_aos = v.split(",") }
+
   parser.on("-h", "--help", "Show this help") do
     puts parser
     exit 1
@@ -548,7 +561,7 @@ parsed = OptionParser.parse do |parser|
 end
 
 if api_key.empty? || project_id.empty?
-  puts parsed
+  puts parser
   exit 1
 end
 
@@ -557,5 +570,5 @@ unless api_key_connect?(api_key, project_id, cluster)
   exit 1
 end
 
-scan = Incremental::Scan.new(api_key, project_id, cluster, repeater_id)
+scan = Incremental::Scan.new(api_key, project_id, cluster, repeater_id, api_domains, bac_aos)
 scan.loop
