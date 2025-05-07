@@ -425,9 +425,7 @@ module Incremental
             base = "#{uri.host}#{uri.port ? ":#{uri.port}" : ""}"
             match = base.starts_with?(domain) || base == domain
             debug("API domain check: #{base} against #{domain} - #{match ? "matched" : "no match"}")
-            if match # this must be like this otherwise we will fail query params.
-              return true
-            end
+match
           rescue e : Exception
             debug("URL parse error: #{ep.url} - #{e.message}")
             false
