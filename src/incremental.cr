@@ -541,11 +541,11 @@ def api_key_connect?(api_key : String, project_id : String, cluster : String) : 
     },
     body: ""
   )
-  unless response.status_code == 200
+  unless response.status.success?
     puts "Response Status Code: #{response.status_code}"
     puts "Response Body: #{response.body.to_s}"
   end
-  return response.status_code == 200
+  response.status.success?
 end
 
 parser = OptionParser.parse do |parser|
