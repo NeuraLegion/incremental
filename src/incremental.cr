@@ -6,7 +6,7 @@ require "option_parser"
 # Incremental is a CLI tool that allows you to smartly make incremental scans
 # using the BrightSec API.
 module Incremental
-  VERSION = "0.2.4"
+  VERSION = "0.2.4.4"
 
   API_TESTS = [
     "amazon_s3_takeover",
@@ -28,7 +28,7 @@ module Incremental
     "xxe",
     "open_cloud_storage",
     "open_database",
-    "promp_injection",
+    "prompt_injection",
   ]
 
   STATIC_TESTS = [
@@ -539,11 +539,11 @@ def api_key_connect?(api_key : String, project_id : String, cluster : String) : 
     },
     body: ""
   )
-  unless response.status.success?
+  unless response.success?
     puts "Response Status Code: #{response.status_code}"
     puts "Response Body: #{response.body.to_s}"
   end
-  response.status.success?
+  response.success?
 end
 
 parser = OptionParser.parse do |parser|
