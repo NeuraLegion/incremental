@@ -6,7 +6,7 @@ require "option_parser"
 # Incremental is a CLI tool that allows you to smartly make incremental scans
 # using the BrightSec API.
 module Incremental
-  VERSION = "0.2.4.4"
+  VERSION = "0.2.4"
 
   API_TESTS = [
     "amazon_s3_takeover",
@@ -28,7 +28,7 @@ module Incremental
     "xxe",
     "open_cloud_storage",
     "open_database",
-    "prompt_injection",
+    "promp_injection",
   ]
 
   STATIC_TESTS = [
@@ -38,6 +38,7 @@ module Incremental
     "amazon_s3_takeover",
     "retire_js",
     "secret_tokens",
+    "stored_xss",
   ]
 
   POST_TESTS = [
@@ -247,12 +248,12 @@ module Incremental
       api_tests << "broken_access_control"
       puts "Scanning APIs...".colorize(:blue)
       start_scan(@apis, api_tests, "API", ["body", "path", "query"])
-      scan(true)
+      scan(!!bac) # Skip API scan if BAC AOs are provided.
     end
 
     private def scan(skip_api_scan : Bool = false)
       # We use the breaking by type and then we choose the test "buckets" we want to run on them.
-      unless skip_api_scan && @apis.empty?
+      unless skip_api_scan || @apis.empty?
         puts "Scanning APIs...".colorize(:blue)
         start_scan(@apis, API_TESTS, "API", ["body", "path", "query"])
       end
@@ -376,7 +377,7 @@ module Incremental
         found_tests = true
       end
 
-      unless found_tests # This means we need more info ocrn the EP and will have to make another request.
+      unless found_tests # This means we need more info on the EP and will have to make another request.
         begin
           res = get("/api/v2/projects/#{@project_id}/entry-points/#{ep.id}")
           ep_obj = JSON.parse(res)
@@ -425,7 +426,9 @@ module Incremental
             base = "#{uri.host}#{uri.port ? ":#{uri.port}" : ""}"
             match = base.starts_with?(domain) || base == domain
             debug("API domain check: #{base} against #{domain} - #{match ? "matched" : "no match"}")
-match
+            if match # this must be like this otherwise we will fail query params.
+              return true
+            end
           rescue e : Exception
             debug("URL parse error: #{ep.url} - #{e.message}")
             false
@@ -513,13 +516,13 @@ match
 end
 
 # Default values
-api_key : String = ""
-project_id : String = ""
+api_key = ""
+project_id = ""
 # Optional values
-cluster : String = "app.brightsec.com" # Default cluster can be switched with eu.brightsec.com
-repeater_id : String? = nil            # Repeater ID
-api_domains : Array(String)? = nil     # Array of domains for the API test.
-bac_aos : Array(String)? = nil         # Array of AOs for the BAC test.
+cluster = "app.brightsec.com" # Default cluster can be switched with eu.brightsec.com
+repeater_id = nil             # Repeater ID
+api_domains = nil             # Array of domains for the API test.
+bac_aos = nil                 # Array of AOs for the BAC test.
 
 def cluster_format?(arg) : Bool
   arg.ends_with?(".brightsec.com") && (arg.starts_with?("app.") || arg.starts_with?("eu."))
@@ -539,11 +542,11 @@ def api_key_connect?(api_key : String, project_id : String, cluster : String) : 
     },
     body: ""
   )
-  unless response.success?
+  unless response.status_code == 200
     puts "Response Status Code: #{response.status_code}"
     puts "Response Body: #{response.body.to_s}"
   end
-  response.success?
+  return response.status_code == 200
 end
 
 parser = OptionParser.parse do |parser|
@@ -569,11 +572,11 @@ parser = OptionParser.parse do |parser|
     puts parser
     puts "\nExamples:".colorize(:green)
     puts "  Basic scan:".colorize(:yellow)
-    puts "    incremental -k orgSercretKey -p projectID"
+    puts "    incremental -k orgSecretKey  -p projectID"
     puts "  Advanced scan with repeater:".colorize(:yellow)
-    puts "    incremental -k orgSercretKey -p projectID -r myRepeaterId -c eu.brightsec.com"
+    puts "    incremental -k orgSecretKey  -p projectID -r myRepeaterId -c eu.brightsec.com"
     puts "  API-focused scan:".colorize(:yellow)
-    puts "    incremental -k orgSercretKey -p projectID -a api.example.com,aapiexample.com:7777"
+    puts "    incremental -k orgSecretKey  -p projectID -a api.example.com,api2.example.com:7777"
     puts ""
     exit 0
   end
