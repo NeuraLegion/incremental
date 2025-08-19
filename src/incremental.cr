@@ -28,7 +28,7 @@ module Incremental
     "xxe",
     "open_cloud_storage",
     "open_database",
-    "promp_injection",
+    "prompt_injection",
   ]
 
   STATIC_TESTS = [
