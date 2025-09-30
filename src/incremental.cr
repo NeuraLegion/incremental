@@ -153,6 +153,7 @@ module Incremental
     @repeater_id : String?
     @api_domains : Array(String)? # Array of domains for the API test.
     @bac_aos : Array(String)?     # Array of AOs for the BAC test.
+    @template_id : String?        # Template ID for scans
 
     # Hash of the EP status found in the project.
     @new_urls : Array(EP) = Array(EP).new
@@ -173,7 +174,7 @@ module Incremental
     @ep_limit : Bool = true # For hard limit 2k EPs per-scan.
     @evaluated : Bool = false
 
-    def initialize(@api_key, @project_id, @cluster, @repeater_id = nil, @api_domains = nil, @bac_aos = nil)
+    def initialize(@api_key, @project_id, @cluster, @repeater_id = nil, @api_domains = nil, @bac_aos = nil, @template_id = nil)
     end
 
     def loop
@@ -300,6 +301,11 @@ module Incremental
         name:                 "Incremental Scan #{chunk_tag}- #{Time.utc} - #{type}",
         repeaters:            @repeater_id ? [@repeater_id.to_s] : nil,
       }
+
+      # Add template ID if provided
+      if template_id = @template_id
+        body = body.merge({templateId: template_id})
+      end
 
       if bac = @bac_aos
         if type == "API" && tests.includes?("broken_access_control")
@@ -523,6 +529,7 @@ cluster = "app.brightsec.com" # Default cluster can be switched with eu.brightse
 repeater_id = nil             # Repeater ID
 api_domains = nil             # Array of domains for the API test.
 bac_aos = nil                 # Array of AOs for the BAC test.
+template_id = nil             # Template ID for scans
 
 def cluster_format?(arg) : Bool
   arg.ends_with?(".brightsec.com") && (arg.starts_with?("app.") || arg.starts_with?("eu."))
@@ -568,6 +575,7 @@ parser = OptionParser.parse do |parser|
   parser.on("-r REPEATER", "--repeater-id=REPEATER", "ID of your Bright repeater") { |v| repeater_id = v }
   parser.on("-a DOMAINS", "--api-domains=DOMAINS", "Comma-separated list of API domains (helps identify API endpoints)") { |v| api_domains = v.split(",") }
   parser.on("-b AOS", "--bac-aos=AOS", "Comma-separated list of Auth Objects (for testing BAC vulnerabilities)") { |v| bac_aos = v.split(",") }
+  parser.on("-t TEMPLATE", "--template-id=TEMPLATE", "Template ID for scans") { |v| template_id = v }
   parser.on("-h", "--help", "Show this help") do
     puts parser
     puts "\nExamples:".colorize(:green)
@@ -577,6 +585,8 @@ parser = OptionParser.parse do |parser|
     puts "    incremental -k orgSecretKey  -p projectID -r myRepeaterId -c eu.brightsec.com"
     puts "  API-focused scan:".colorize(:yellow)
     puts "    incremental -k orgSecretKey  -p projectID -a api.example.com,api2.example.com:7777"
+    puts "  Scan with template:".colorize(:yellow)
+    puts "    incremental -k orgSecretKey  -p projectID -t templateId123"
     puts ""
     exit 0
   end
@@ -596,5 +606,5 @@ unless api_key_connect?(api_key, project_id, cluster)
   exit 1
 end
 
-scan = Incremental::Scan.new(api_key, project_id, cluster, repeater_id, api_domains, bac_aos)
+scan = Incremental::Scan.new(api_key, project_id, cluster, repeater_id, api_domains, bac_aos, template_id)
 scan.loop
