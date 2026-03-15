@@ -8,6 +8,58 @@ require "option_parser"
 module Incremental
   VERSION = "0.2.4"
 
+  BANNER = <<-BANNER
+
+  #{"  ╔╗  ╔═╗ ╦ ╔═╗ ╦ ╦ ╔╦╗".colorize(:light_magenta)}
+  #{"  ╠╩╗ ╠╦╝ ║ ║ ╦ ╠═╣  ║ ".colorize(:magenta)}
+  #{"  ╚═╝ ╩╚═ ╩ ╚═╝ ╩ ╩  ╩ ".colorize(:light_magenta)}
+  #{"  ━━━ Incremental Scanner v#{VERSION} ━━━".colorize(:light_cyan)}
+  BANNER
+
+  SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+
+  class Spinner
+    @running = false
+    @fiber : Fiber? = nil
+    @message : String
+
+    def initialize(@message = "Working")
+    end
+
+    def start
+      @running = true
+      frame = 0
+      @fiber = spawn do
+        while @running
+          print "\r  #{SPINNER_FRAMES[frame % SPINNER_FRAMES.size].colorize(:light_cyan)} #{@message}..."
+          frame += 1
+          sleep 80.milliseconds
+        end
+      end
+    end
+
+    def update(@message : String)
+    end
+
+    def stop(final_message : String? = nil)
+      @running = false
+      if msg = final_message
+        print "\r  #{"✔".colorize(:green)} #{msg}#{" " * 20}\n"
+      else
+        print "\r#{" " * 60}\r"
+      end
+    end
+  end
+
+  def self.progress_bar(current : Int32, total : Int32, width : Int32 = 30) : String
+    return "" if total == 0
+    pct = (current.to_f / total * 100).to_i
+    filled = (current.to_f / total * width).to_i
+    empty = width - filled
+    bar = "█" * filled + "░" * empty
+    "#{bar.colorize(:light_cyan)} #{pct}% (#{current}/#{total})"
+  end
+
   API_TESTS = [
     "amazon_s3_takeover",
     "bopla",
@@ -180,14 +232,23 @@ module Incremental
     def loop
       populate
       loop do
-        puts "\nProject Summary"
-        puts "---------------"
-        puts "New: #{@new_urls.size}".colorize(:green)
-        puts "Changed: #{@changed_urls.size}".colorize(:yellow)
-        puts "Vulnerable: #{@vulnerable_urls.size}".colorize(:red)
-        puts "Tested: #{@tested_urls.size}"
-        puts "---------------"
-        puts "[s\\scan] [r\\refresh] [ea\\evaluate all] [en\\evaluate new & changed] [lo\\list other] [q\\quit]"
+        total = @new_urls.size + @changed_urls.size + @vulnerable_urls.size + @tested_urls.size
+        puts ""
+        puts "  ━━━ Project Summary ━━━".colorize(:light_cyan)
+        puts ""
+        puts "    ● #{"%6d" % @new_urls.size} New".colorize(:green)
+        puts "    ● #{"%6d" % @changed_urls.size} Changed".colorize(:yellow)
+        puts "    ● #{"%6d" % @vulnerable_urls.size} Vulnerable".colorize(:red)
+        puts "    ○ #{"%6d" % @tested_urls.size} Tested".colorize(:dark_gray)
+        puts "    ────────────────────".colorize(:dark_gray)
+        puts "    Σ  #{"%6d" % total} Total".colorize(:white)
+        puts ""
+        puts "  #{"┌─────────────────────────────────────────┐".colorize(:dark_gray)}"
+        puts "  #{"│".colorize(:dark_gray)} #{"s".colorize(:light_cyan)}  Scan          #{"ea".colorize(:light_cyan)} Evaluate All    #{"│".colorize(:dark_gray)}"
+        puts "  #{"│".colorize(:dark_gray)} #{"r".colorize(:light_cyan)}  Refresh        #{"en".colorize(:light_cyan)} Evaluate New    #{"│".colorize(:dark_gray)}"
+        puts "  #{"│".colorize(:dark_gray)} #{"lo".colorize(:light_cyan)} List Other     #{"q".colorize(:light_cyan)}  Quit            #{"│".colorize(:dark_gray)}"
+        puts "  #{"└─────────────────────────────────────────┘".colorize(:dark_gray)}"
+        print "  #{"❯".colorize(:light_cyan)} "
         input = gets.to_s.chomp.downcase
         case input
         when "s", "scan"
@@ -199,16 +260,18 @@ module Incremental
         when "en", "evaluate new & changed"
           evaluate(true)
         when "lo", "list other"
-          puts "---------------"
           unless @evaluated
-            puts "You must evaluate the URLs before listing them.".colorize(:red)
+            puts "  #{"✘".colorize(:red)} You must evaluate the URLs before listing them."
             next
           end
+          puts ""
+          puts "  ━━━ Other Endpoints ━━━".colorize(:light_cyan)
           @other.each do |ep|
-            puts "[#{ep.method}] #{ep.url}"
+            puts "    #{ep.method.colorize(:yellow)} #{ep.url}"
           end
-          puts "---------------"
+          puts ""
         when "q", "quit"
+          puts "\n  #{"✨".colorize(:light_cyan)} Goodbye!\n"
           exit 0
         end
       end
@@ -216,7 +279,7 @@ module Incremental
 
     private def setup_bac_test
       unless @evaluated
-        puts "You must evaluate the URLs before scanning them.".colorize(:red)
+        puts "  #{"✘".colorize(:red)} You must evaluate the URLs before scanning them."
         return
       end
 
@@ -230,55 +293,66 @@ module Incremental
       end
 
       unless bac.size > 1
-        puts "BAC test requires at least 2 AOs.".colorize(:red)
-        puts "Run scan without BAC test.".colorize(:yellow)
+        puts "  #{"✘".colorize(:red)} BAC test requires at least 2 AOs."
+        puts "  #{"⚠".colorize(:yellow)} Running scan without BAC test."
         return scan
       end
 
       # Validate AO format - can be "null" or Bright UUID.
       bac.each do |ao|
         unless ao == "null" || ao.matches?(/^[a-zA-Z0-9]+$/)
-          puts "Invalid AO format: #{ao}. Must be 'null' or alphanumeric.".colorize(:red)
+          puts "  #{"✘".colorize(:red)} Invalid AO format: #{ao}. Must be 'null' or alphanumeric."
           return
         end
       end
 
-      puts "Adding BAC test with AOs: #{bac.join(", ")}".colorize(:green)
+      puts "  #{"✔".colorize(:green)} Adding BAC test with AOs: #{bac.join(", ")}"
 
       api_tests = API_TESTS.dup
       api_tests << "broken_access_control"
-      puts "Scanning APIs...".colorize(:blue)
+      puts "  #{"▶".colorize(:light_cyan)} Scanning APIs (with BAC)..."
       start_scan(@apis, api_tests, "API", ["body", "path", "query"])
       scan(!!bac) # Skip API scan if BAC AOs are provided.
     end
 
     private def scan(skip_api_scan : Bool = false)
+      puts ""
+      puts "  ━━━ Launching Scans ━━━".colorize(:light_cyan)
+      puts ""
+      scan_count = 0
       # We use the breaking by type and then we choose the test "buckets" we want to run on them.
       unless skip_api_scan || @apis.empty?
-        puts "Scanning APIs...".colorize(:blue)
+        puts "  #{"▶".colorize(:light_cyan)} API       #{@apis.size} endpoints, #{API_TESTS.size} tests"
         start_scan(@apis, API_TESTS, "API", ["body", "path", "query"])
+        scan_count += 1
       end
       unless @static.empty?
-        puts "Scanning Static...".colorize(:blue)
+        puts "  #{"▶".colorize(:light_cyan)} Static    #{@static.size} endpoints, #{STATIC_TESTS.size} tests"
         start_scan(@static, STATIC_TESTS, "STATIC")
+        scan_count += 1
       end
       unless @posts.empty?
-        puts "Scanning POSTs...".colorize(:blue)
+        puts "  #{"▶".colorize(:light_cyan)} POST      #{@posts.size} endpoints, #{POST_TESTS.size} tests"
         start_scan(@posts, POST_TESTS, "POST")
+        scan_count += 1
       end
       unless @html.empty?
-        puts "Scanning HTML...".colorize(:blue)
+        puts "  #{"▶".colorize(:light_cyan)} HTML      #{@html.size} endpoints, #{HTML_TESTS.size} tests"
         start_scan(@html, HTML_TESTS, "HTML")
+        scan_count += 1
       end
       unless @xml.empty?
-        puts "Scanning XML...".colorize(:blue)
+        puts "  #{"▶".colorize(:light_cyan)} XML       #{@xml.size} endpoints, #{XML_TESTS.size} tests"
         start_scan(@xml, XML_TESTS, "XML")
+        scan_count += 1
       end
       unless @other.empty?
-        puts "Scanning other...".colorize(:blue)
+        puts "  #{"▶".colorize(:light_cyan)} Other     #{@other.size} endpoints, #{OTHER_TESTS.size} tests"
         start_scan(@other, OTHER_TESTS, "OTHER")
+        scan_count += 1
       end
-      puts "Done spawning scans".colorize(:green)
+      puts ""
+      puts "  #{"✔".colorize(:green)} #{scan_count} scan(s) launched successfully"
     end
 
     private def start_scan(ep : Array(EP), tests : Array(String), type : String, locations : Array(String) = ["body", "fragment", "query"])
@@ -293,36 +367,42 @@ module Incremental
 
     private def scan_request(ep : Array(EP), tests : Array(String), type : String, locations : Array(String), isChunk : Bool = false)
       chunk_tag = isChunk ? "[Chunk] " : ""
-      body = {
-        tests:                tests,
-        entryPointIds:        ep.map(&.id),
-        attackParamLocations: locations,
-        projectId:            @project_id,
-        name:                 "Incremental Scan #{chunk_tag}- #{Time.utc} - #{type}",
-        repeaters:            @repeater_id ? [@repeater_id.to_s] : nil,
-      }
+      spinner = Spinner.new("Sending #{type} scan request#{isChunk ? " (chunk)" : ""}")
+      spinner.start
+      begin
+        body = {
+          tests:                tests,
+          entryPointIds:        ep.map(&.id),
+          attackParamLocations: locations,
+          projectId:            @project_id,
+          name:                 "Incremental Scan #{chunk_tag}- #{Time.utc} - #{type}",
+          repeaters:            @repeater_id ? [@repeater_id.to_s] : nil,
+        }
 
-      # Add template ID if provided
-      if template_id = @template_id
-        body = body.merge({templateId: template_id})
-      end
-
-      if bac = @bac_aos
-        if type == "API" && tests.includes?("broken_access_control")
-          test_metadata = {
-            "broken_access_control" => {
-              "authObjectId" => bac.map { |ao| ao == "null" ? nil : ao },
-            },
-          }
-          body = body.merge({testMetadata: test_metadata})
+        # Add template ID if provided
+        if template_id = @template_id
+          body = body.merge({templateId: template_id})
         end
-      end
 
-      response = get("/api/v1/scans", "POST", body: body.to_json)
-      debug("Request body: #{body.to_json}")
-      debug("Response: #{response}")
-    rescue e : JSON::ParseException
-      puts "Error when trying to start a scan: #{e}".colorize(:red)
+        if bac = @bac_aos
+          if type == "API" && tests.includes?("broken_access_control")
+            test_metadata = {
+              "broken_access_control" => {
+                "authObjectId" => bac.map { |ao| ao == "null" ? nil : ao },
+              },
+            }
+            body = body.merge({testMetadata: test_metadata})
+          end
+        end
+
+        response = get("/api/v1/scans", "POST", body: body.to_json)
+        spinner.stop("#{type} scan#{isChunk ? " (chunk)" : ""} submitted")
+        debug("Request body: #{body.to_json}")
+        debug("Response: #{response}")
+      rescue e : JSON::ParseException
+        spinner.stop
+        puts "  #{"✘".colorize(:red)} Error starting #{type} scan: #{e}"
+      end
     end
 
     private def evaluate(skip : Bool = false)
@@ -334,6 +414,7 @@ module Incremental
       @other.clear
 
       count = 0
+      skipped = 0
       if skip
         total = @new_urls.size + @changed_urls.size
         full = [@new_urls, @changed_urls]
@@ -342,25 +423,34 @@ module Incremental
         full = [@new_urls, @changed_urls, @vulnerable_urls, @tested_urls]
       end
 
+      puts ""
+      puts "  ━━━ Evaluating Endpoints ━━━".colorize(:light_cyan)
+      puts ""
+
       full.flatten.each do |ep|
         count += 1
         if ep.connectivity == "unreachable" || ep.connectivity == "unauthorized"
+          skipped += 1
           debug("Skipping: #{ep.url} - #{ep.connectivity}")
           next
         end
-        print "\rEvaluating #{count} of #{total} URLs..."
+        print "\r  #{SPINNER_FRAMES[count % SPINNER_FRAMES.size].colorize(:light_cyan)} #{Incremental.progress_bar(count, total)}  "
         select_tests(ep)
       end
       @evaluated = true
-      puts "---------------"
-      puts "Evaluated".colorize(:green)
-      puts "#{@apis.size} APIs."
-      puts "#{@static.size} Static files (JS/CSS/etc..)."
-      puts "#{@posts.size} POSTs."
-      puts "#{@html.size} HTML files."
-      puts "#{@xml.size} XML files."
-      puts "#{@other.size} other."
-      puts "---------------"
+      print "\r#{" " * 80}\r"
+      puts "  #{"✔".colorize(:green)} Evaluation complete"
+      if skipped > 0
+        puts "    #{"(#{skipped} skipped — unreachable/unauthorized)".colorize(:dark_gray)}"
+      end
+      puts ""
+      puts "    #{"▸".colorize(:light_cyan)} #{"%5d" % @apis.size} API endpoints"
+      puts "    #{"▸".colorize(:light_cyan)} #{"%5d" % @static.size} Static files (JS/CSS/etc)"
+      puts "    #{"▸".colorize(:light_cyan)} #{"%5d" % @posts.size} POST endpoints"
+      puts "    #{"▸".colorize(:light_cyan)} #{"%5d" % @html.size} HTML pages"
+      puts "    #{"▸".colorize(:light_cyan)} #{"%5d" % @xml.size} XML resources"
+      puts "    #{"▸".colorize(:light_cyan)} #{"%5d" % @other.size} Other"
+      puts ""
     end
 
     private def select_tests(ep : EP)
@@ -411,9 +501,9 @@ module Incremental
             @other << ep
           end
         rescue e : JSON::ParseException
-          puts "Error parsing JSON: #{e} - #{res}".colorize(:red)
+          puts "  #{"✘".colorize(:red)} Error parsing JSON: #{e}"
         rescue e : Exception
-          puts "Error: #{e}".colorize(:red)
+          puts "  #{"✘".colorize(:red)} Error: #{e}"
         end
       end
     end
@@ -447,6 +537,10 @@ module Incremental
 
     private def populate
       overall_eps = Array(EP).new
+      total_count = 0
+      puts ""
+      puts "  ━━━ Loading Entry Points ━━━".colorize(:light_cyan)
+      puts ""
       loop do
         next_id = overall_eps[-1]?.try(&.id)
         next_created_at = overall_eps[-1]?.try(&.createdAt)
@@ -455,16 +549,20 @@ module Incremental
         else
           eps = get("/api/v2/projects/#{@project_id}/entry-points?limit=500")
         end
-        items = Array(EP).from_json(JSON.parse(eps)["items"].to_json)
+        parsed = JSON.parse(eps)
+        items = Array(EP).from_json(parsed["items"].to_json)
+        total_count = parsed["total"].as_i? || 0
         break if items.size == 0
         break if items[-1]?.try &.id == overall_eps[-1]?.try &.id
         items.each do |ep|
           overall_eps << ep
         end
-        print "\rPopulating... #{overall_eps.size}/#{JSON.parse(eps)["total"]} entry points."
+        print "\r  #{SPINNER_FRAMES[overall_eps.size % SPINNER_FRAMES.size].colorize(:light_cyan)} #{Incremental.progress_bar(overall_eps.size, total_count)}  "
       rescue e : JSON::ParseException
-        puts "Error parsing JSON: #{e} - #{eps}".colorize(:red)
+        puts "\n  #{"✘".colorize(:red)} Error parsing JSON: #{e}"
       end
+      print "\r#{" " * 80}\r"
+      puts "  #{"✔".colorize(:green)} Loaded #{overall_eps.size} entry points"
 
       @new_urls.clear
       @changed_urls.clear
@@ -532,7 +630,7 @@ bac_aos = nil                 # Array of AOs for the BAC test.
 template_id = nil             # Template ID for scans
 
 def cluster_format?(arg) : Bool
-  arg.ends_with?(".brightsec.com") && (arg.starts_with?("app.") || arg.starts_with?("eu."))
+  arg.ends_with?(".brightsec.com")
 end
 
 def api_key_connect?(api_key : String, project_id : String, cluster : String) : Bool
@@ -550,8 +648,7 @@ def api_key_connect?(api_key : String, project_id : String, cluster : String) : 
     body: ""
   )
   unless response.status_code == 200
-    puts "Response Status Code: #{response.status_code}"
-    puts "Response Body: #{response.body.to_s}"
+    STDERR.puts "  #{"✘".colorize(:red)} Auth failed (#{response.status_code}): #{response.body.to_s}"
   end
   return response.status_code == 200
 end
@@ -601,10 +698,17 @@ if api_key.empty? || project_id.empty?
   exit 1
 end
 
+puts Incremental::BANNER
+puts ""
+
+spinner = Incremental::Spinner.new("Connecting to #{cluster}")
+spinner.start
 unless api_key_connect?(api_key, project_id, cluster)
-  puts "Please check the api-key and make sure you use the right cluster before starting a scan. Eg. app.brightsec.com / eu.brightsec.com".colorize(:red)
+  spinner.stop
+  puts "  #{"✘".colorize(:red)} Connection failed. Check your API key and cluster (app.brightsec.com / eu.brightsec.com)."
   exit 1
 end
+spinner.stop("✔".colorize(:green).to_s + " Connected to #{cluster}")
 
 scan = Incremental::Scan.new(api_key, project_id, cluster, repeater_id, api_domains, bac_aos, template_id)
 scan.loop
