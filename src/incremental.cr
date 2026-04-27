@@ -90,7 +90,6 @@ module Incremental
     "amazon_s3_takeover",
     "retire_js",
     "secret_tokens",
-    "stored_xss",
   ]
 
   POST_TESTS = [
@@ -107,7 +106,6 @@ module Incremental
     "sqli",
     "ssrf",
     "ssti",
-    "stored_xss",
     "osi",
     "proto_pollution",
     "server_side_js_injection",
@@ -120,7 +118,6 @@ module Incremental
     "excessive_data_exposure",
     "html_injection",
     "unvalidated_redirect",
-    "stored_xss",
     "proto_pollution",
     "server_side_js_injection",
     "header_security",
@@ -128,12 +125,21 @@ module Incremental
     "css_injection",
     "directory_listing",
     "secret_tokens",
+    "insecure_output_handling",
   ]
 
   XML_TESTS = [
     "xxe",
     "xss",
     "secret_tokens",
+  ]
+
+  # Tests that need a wide entry-point set in a single scan so the engine can
+  # discover cross-request relationships (e.g. payload submitted in one endpoint
+  # and reflected in another). Run these once on the union of candidate buckets
+  # instead of repeating them inside per-bucket scans.
+  CROSS_EP_TESTS = [
+    "stored_xss",
   ]
 
   OTHER_TESTS = [
@@ -179,7 +185,6 @@ module Incremental
     "sqli",
     "ssrf",
     "ssti",
-    "stored_xss",
     "unvalidated_redirect",
     "version_control_systems",
     "wordpress",
@@ -349,6 +354,12 @@ module Incremental
       unless @other.empty?
         puts "  #{"▶".colorize(:light_cyan)} Other     #{@other.size} endpoints, #{OTHER_TESTS.size} tests"
         start_scan(@other, OTHER_TESTS, "OTHER")
+        scan_count += 1
+      end
+      cross_ep = (@apis + @posts + @html + @xml + @static + @other).uniq(&.id)
+      unless cross_ep.empty?
+        puts "  #{"▶".colorize(:light_cyan)} CrossEP   #{cross_ep.size} endpoints, #{CROSS_EP_TESTS.size} tests"
+        start_scan(cross_ep, CROSS_EP_TESTS, "CROSS_EP", ["body", "query", "path"])
         scan_count += 1
       end
       puts ""
