@@ -248,11 +248,11 @@ module Incremental
         puts "    ────────────────────".colorize(:dark_gray)
         puts "    Σ  #{"%6d" % total} Total".colorize(:white)
         puts ""
-        puts "  #{"┌─────────────────────────────────────────┐".colorize(:dark_gray)}"
-        puts "  #{"│".colorize(:dark_gray)} #{"s".colorize(:light_cyan)}  Scan          #{"ea".colorize(:light_cyan)} Evaluate All    #{"│".colorize(:dark_gray)}"
-        puts "  #{"│".colorize(:dark_gray)} #{"r".colorize(:light_cyan)}  Refresh        #{"en".colorize(:light_cyan)} Evaluate New    #{"│".colorize(:dark_gray)}"
-        puts "  #{"│".colorize(:dark_gray)} #{"lo".colorize(:light_cyan)} List Other     #{"q".colorize(:light_cyan)}  Quit            #{"│".colorize(:dark_gray)}"
-        puts "  #{"└─────────────────────────────────────────┘".colorize(:dark_gray)}"
+        puts "  #{"┌────────────────────────────────┐".colorize(:dark_gray)}"
+        puts "  #{"│".colorize(:dark_gray)} #{"s".colorize(:light_cyan)}  Scan        #{"ea".colorize(:light_cyan)} Evaluate All #{"│".colorize(:dark_gray)}"
+        puts "  #{"│".colorize(:dark_gray)} #{"r".colorize(:light_cyan)}  Refresh     #{"en".colorize(:light_cyan)} Evaluate New #{"│".colorize(:dark_gray)}"
+        puts "  #{"│".colorize(:dark_gray)} #{"lo".colorize(:light_cyan)} List Other  #{"q".colorize(:light_cyan)}  Quit         #{"│".colorize(:dark_gray)}"
+        puts "  #{"└────────────────────────────────┘".colorize(:dark_gray)}"
         print "  #{"❯".colorize(:light_cyan)} "
         input = gets.to_s.chomp.downcase
         case input
