@@ -18,6 +18,10 @@ module Incremental
 
   SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
 
+  # Endpoints with more parameters than this are flagged as "excessive"
+  # and the user will be prompted to skip them from the scans.
+  DEFAULT_MAX_PARAMS = 300
+
   class Spinner
     @running = false
     @fiber : Fiber? = nil
@@ -206,6 +210,11 @@ module Incremental
     @api_domains : Array(String)? # Array of domains for the API test.
     @bac_aos : Array(String)?     # Array of AOs for the BAC test.
     @template_id : String?        # Template ID for scans
+    @max_params : Int32           # Threshold for flagging EPs with excessive params.
+    @skip_excessive : Bool        # If true, automatically skip EPs over the param threshold.
+
+    # EPs flagged for having an excessive number of parameters.
+    @excessive_urls : Array(EP) = Array(EP).new
 
     # Hash of the EP status found in the project.
     @new_urls : Array(EP) = Array(EP).new
@@ -226,7 +235,7 @@ module Incremental
     @ep_limit : Bool = true # For hard limit 2k EPs per-scan.
     @evaluated : Bool = false
 
-    def initialize(@api_key, @project_id, @cluster, @repeater_id = nil, @api_domains = nil, @bac_aos = nil, @template_id = nil)
+    def initialize(@api_key, @project_id, @cluster, @repeater_id = nil, @api_domains = nil, @bac_aos = nil, @template_id = nil, @max_params = DEFAULT_MAX_PARAMS, @skip_excessive = false)
     end
 
     def loop
@@ -246,7 +255,8 @@ module Incremental
         puts "  #{"┌─────────────────────────────────────────┐".colorize(:dark_gray)}"
         puts "  #{"│".colorize(:dark_gray)} #{"s".colorize(:light_cyan)}  Scan          #{"ea".colorize(:light_cyan)} Evaluate All    #{"│".colorize(:dark_gray)}"
         puts "  #{"│".colorize(:dark_gray)} #{"r".colorize(:light_cyan)}  Refresh        #{"en".colorize(:light_cyan)} Evaluate New    #{"│".colorize(:dark_gray)}"
-        puts "  #{"│".colorize(:dark_gray)} #{"lo".colorize(:light_cyan)} List Other     #{"q".colorize(:light_cyan)}  Quit            #{"│".colorize(:dark_gray)}"
+        puts "  #{"│".colorize(:dark_gray)} #{"lo".colorize(:light_cyan)} List Other     #{"le".colorize(:light_cyan)} List Excessive  #{"│".colorize(:dark_gray)}"
+        puts "  #{"│".colorize(:dark_gray)} #{"q".colorize(:light_cyan)}  Quit                              #{"│".colorize(:dark_gray)}"
         puts "  #{"└─────────────────────────────────────────┘".colorize(:dark_gray)}"
         print "  #{"❯".colorize(:light_cyan)} "
         input = gets.to_s.chomp.downcase
@@ -268,6 +278,21 @@ module Incremental
           puts "  ━━━ Other Endpoints ━━━".colorize(:light_cyan)
           @other.each do |ep|
             puts "    #{ep.method.colorize(:yellow)} #{ep.url}"
+          end
+          puts ""
+        when "le", "list excessive"
+          unless @evaluated
+            puts "  #{"✘".colorize(:red)} You must evaluate the URLs before listing them."
+            next
+          end
+          puts ""
+          puts "  ━━━ Excessive-Parameter Endpoints (> #{@max_params}) ━━━".colorize(:yellow)
+          if @excessive_urls.empty?
+            puts "    #{"None".colorize(:dark_gray)}"
+          else
+            @excessive_urls.each do |ep|
+              puts "    #{ep.method.colorize(:yellow)} #{ep.url} #{"(#{ep.parametersCount} params)".colorize(:dark_gray)}"
+            end
           end
           puts ""
         when "q", "quit"
@@ -412,6 +437,7 @@ module Incremental
       @html.clear
       @xml.clear
       @other.clear
+      @excessive_urls.clear
 
       count = 0
       skipped = 0
@@ -427,11 +453,27 @@ module Incremental
       puts "  ━━━ Evaluating Endpoints ━━━".colorize(:light_cyan)
       puts ""
 
-      full.flatten.each do |ep|
+      # First pass: detect EPs with excessive parameters so we can warn the user
+      # before they get added to scan buckets.
+      flat_eps = full.flatten
+      flat_eps.each do |ep|
+        if ep.parametersCount > @max_params
+          @excessive_urls << ep
+        end
+      end
+
+      include_excessive = handle_excessive_endpoints
+
+      flat_eps.each do |ep|
         count += 1
         if ep.connectivity == "unreachable" || ep.connectivity == "unauthorized"
           skipped += 1
           debug("Skipping: #{ep.url} - #{ep.connectivity}")
+          next
+        end
+        if ep.parametersCount > @max_params && !include_excessive
+          skipped += 1
+          debug("Skipping (excessive params: #{ep.parametersCount}): #{ep.url}")
           next
         end
         print "\r  #{SPINNER_FRAMES[count % SPINNER_FRAMES.size].colorize(:light_cyan)} #{Incremental.progress_bar(count, total)}  "
@@ -441,7 +483,11 @@ module Incremental
       print "\r#{" " * 80}\r"
       puts "  #{"✔".colorize(:green)} Evaluation complete"
       if skipped > 0
-        puts "    #{"(#{skipped} skipped — unreachable/unauthorized)".colorize(:dark_gray)}"
+        puts "    #{"(#{skipped} skipped — unreachable/unauthorized/excessive-params)".colorize(:dark_gray)}"
+      end
+      if !@excessive_urls.empty?
+        action = include_excessive ? "included" : "excluded"
+        puts "    #{"(#{@excessive_urls.size} endpoints with > #{@max_params} params #{action})".colorize(:yellow)}"
       end
       puts ""
       puts "    #{"▸".colorize(:light_cyan)} #{"%5d" % @apis.size} API endpoints"
@@ -451,6 +497,38 @@ module Incremental
       puts "    #{"▸".colorize(:light_cyan)} #{"%5d" % @xml.size} XML resources"
       puts "    #{"▸".colorize(:light_cyan)} #{"%5d" % @other.size} Other"
       puts ""
+    end
+
+    # Returns true if the user wants to include excessive-parameter EPs in the
+    # scan, false if they should be skipped. When --skip-excessive was passed
+    # on the CLI, this is automatic and no prompt is shown.
+    private def handle_excessive_endpoints : Bool
+      return true if @excessive_urls.empty?
+
+      puts "  #{"⚠".colorize(:yellow)} #{@excessive_urls.size} endpoint(s) have more than #{@max_params} parameters."
+      puts "    #{"Scanning these may be slow and noisy.".colorize(:dark_gray)}"
+      @excessive_urls.first(10).each do |ep|
+        puts "    #{"•".colorize(:yellow)} #{ep.method.colorize(:yellow)} #{ep.url} #{"(#{ep.parametersCount} params)".colorize(:dark_gray)}"
+      end
+      if @excessive_urls.size > 10
+        puts "    #{"…and #{@excessive_urls.size - 10} more".colorize(:dark_gray)}"
+      end
+
+      if @skip_excessive
+        puts "  #{"✔".colorize(:green)} Auto-skipping excessive-parameter endpoints (--skip-excessive)."
+        return false
+      end
+
+      print "  #{"❯".colorize(:light_cyan)} Skip these endpoints from the scan? [Y/n] "
+      answer = gets.to_s.chomp.downcase
+      include_them = answer == "n" || answer == "no"
+      if include_them
+        puts "  #{"✔".colorize(:green)} Including excessive-parameter endpoints."
+        true
+      else
+        puts "  #{"✔".colorize(:green)} Excluding excessive-parameter endpoints."
+        false
+      end
     end
 
     private def select_tests(ep : EP)
@@ -623,11 +701,13 @@ end
 api_key = ""
 project_id = ""
 # Optional values
-cluster = "app.brightsec.com" # Default cluster can be switched with eu.brightsec.com
-repeater_id = nil             # Repeater ID
-api_domains = nil             # Array of domains for the API test.
-bac_aos = nil                 # Array of AOs for the BAC test.
-template_id = nil             # Template ID for scans
+cluster = "app.brightsec.com"                # Default cluster can be switched with eu.brightsec.com
+repeater_id = nil                            # Repeater ID
+api_domains = nil                            # Array of domains for the API test.
+bac_aos = nil                                # Array of AOs for the BAC test.
+template_id = nil                            # Template ID for scans
+max_params = Incremental::DEFAULT_MAX_PARAMS # Threshold for flagging EPs with too many params.
+skip_excessive = false                       # Auto-skip EPs over the param threshold.
 
 def cluster_format?(arg) : Bool
   arg.ends_with?(".brightsec.com")
@@ -673,6 +753,16 @@ parser = OptionParser.parse do |parser|
   parser.on("-a DOMAINS", "--api-domains=DOMAINS", "Comma-separated list of API domains (helps identify API endpoints)") { |v| api_domains = v.split(",") }
   parser.on("-b AOS", "--bac-aos=AOS", "Comma-separated list of Auth Objects (for testing BAC vulnerabilities)") { |v| bac_aos = v.split(",") }
   parser.on("-t TEMPLATE", "--template-id=TEMPLATE", "Template ID for scans") { |v| template_id = v }
+  parser.on("-m PARAMS", "--max-params=PARAMS", "Flag EPs with more parameters than this (default: #{Incremental::DEFAULT_MAX_PARAMS})") do |v|
+    parsed = v.to_i?
+    if parsed && parsed > 0
+      max_params = parsed
+    else
+      puts "Invalid --max-params value: #{v}. Must be a positive integer.".colorize(:red)
+      exit 1
+    end
+  end
+  parser.on("-s", "--skip-excessive", "Automatically skip endpoints with > max-params (no prompt)") { skip_excessive = true }
   parser.on("-h", "--help", "Show this help") do
     puts parser
     puts "\nExamples:".colorize(:green)
@@ -710,5 +800,5 @@ unless api_key_connect?(api_key, project_id, cluster)
 end
 spinner.stop("✔".colorize(:green).to_s + " Connected to #{cluster}")
 
-scan = Incremental::Scan.new(api_key, project_id, cluster, repeater_id, api_domains, bac_aos, template_id)
+scan = Incremental::Scan.new(api_key, project_id, cluster, repeater_id, api_domains, bac_aos, template_id, max_params, skip_excessive)
 scan.loop
