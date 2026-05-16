@@ -75,7 +75,6 @@ module Incremental
     "id_enumeration",
     "improper_asset_management",
     "jwt",
-    "nosql",
     "osi",
     "lfi",
     "rfi",
@@ -94,7 +93,6 @@ module Incremental
     "amazon_s3_takeover",
     "retire_js",
     "secret_tokens",
-    "stored_xss",
   ]
 
   POST_TESTS = [
@@ -115,7 +113,6 @@ module Incremental
     "osi",
     "proto_pollution",
     "server_side_js_injection",
-    "nosql",
   ]
 
   HTML_TESTS = [
