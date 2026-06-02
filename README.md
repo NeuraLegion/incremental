@@ -55,15 +55,15 @@ Optional arguments:
                                      Template ID for scans
     -m PARAMS, --max-params=PARAMS   Flag EPs with more parameters than this (default: 300)
     -s, --skip-excessive             Automatically skip endpoints with > max-params (no prompt)
-    -C N, --concurrency=N            Max concurrent requests per scan (1-50)
-    -R N, --request-rate-limit=N     Requests per second per scan (1-1000)
+    -C N, --concurrency=N            Max concurrent requests per scan (1-50, default: 10)
+    -R N, --request-rate-limit=N     Requests per second per scan (1-1000, default: unlimited)
     -h, --help                       Show this help
     -v, --version                    Show version
 ```
 
 ### Tuning scan load
 
-Use `-C/--concurrency` to cap concurrent requests (`poolSize`, 1-50) and `-R/--request-rate-limit` to cap requests per second (`requestsRateLimit`, 1-1000). When omitted, Bright applies its own defaults.
+Use `-C/--concurrency` to cap concurrent requests (`poolSize`, 1-50, default: 10) and `-R/--request-rate-limit` to cap requests per second (`requestsRateLimit`, 1-1000, default: unlimited). When omitted, the Bright defaults apply.
 
 ```bash
 incremental -k <api_key> -p <project_id> -C 25 -R 200

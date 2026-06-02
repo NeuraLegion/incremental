@@ -793,7 +793,7 @@ parser = OptionParser.parse do |parser|
     end
   end
   parser.on("-s", "--skip-excessive", "Automatically skip endpoints with > max-params (no prompt)") { skip_excessive = true }
-  parser.on("-C N", "--concurrency=N", "Max concurrent requests per scan (1-50)") do |v|
+  parser.on("-C N", "--concurrency=N", "Max concurrent requests per scan (1-50, default: 10)") do |v|
     parsed = v.to_i?
     if parsed && parsed >= 1 && parsed <= 50
       concurrency = parsed
@@ -802,7 +802,7 @@ parser = OptionParser.parse do |parser|
       exit 1
     end
   end
-  parser.on("-R N", "--request-rate-limit=N", "Requests per second per scan (1-1000)") do |v|
+  parser.on("-R N", "--request-rate-limit=N", "Requests per second per scan (1-1000, default: unlimited)") do |v|
     parsed = v.to_i?
     if parsed && parsed >= 1 && parsed <= 1000
       request_rate_limit = parsed
