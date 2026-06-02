@@ -6,7 +6,7 @@ require "option_parser"
 # Incremental is a CLI tool that allows you to smartly make incremental scans
 # using the BrightSec API.
 module Incremental
-  VERSION = "0.2.4"
+  VERSION = "0.2.5"
 
   BANNER = <<-BANNER
 
@@ -167,7 +167,6 @@ module Incremental
     "jwt",
     "ldapi",
     "lfi",
-    "nosql",
     "open_cloud_storage",
     "open_database",
     "osi",
@@ -209,6 +208,9 @@ module Incremental
     @template_id : String?        # Template ID for scans
     @max_params : Int32           # Threshold for flagging EPs with excessive params.
     @skip_excessive : Bool        # If true, automatically skip EPs over the param threshold.
+    @concurrency : Int32?         # poolSize: max concurrent requests (1-50).
+    @request_rate_limit : Int32?  # requestsRateLimit: requests per second (1-1000).
+    @project_name : String = ""
 
     # EPs flagged for having an excessive number of parameters.
     @excessive_urls : Array(EP) = Array(EP).new
@@ -232,7 +234,7 @@ module Incremental
     @ep_limit : Bool = true # For hard limit 2k EPs per-scan.
     @evaluated : Bool = false
 
-    def initialize(@api_key, @project_id, @cluster, @repeater_id = nil, @api_domains = nil, @bac_aos = nil, @template_id = nil, @max_params = DEFAULT_MAX_PARAMS, @skip_excessive = false)
+    def initialize(@api_key, @project_id, @cluster, @repeater_id = nil, @api_domains = nil, @bac_aos = nil, @template_id = nil, @max_params = DEFAULT_MAX_PARAMS, @skip_excessive = false, @concurrency = nil, @request_rate_limit = nil)
     end
 
     def loop
@@ -240,21 +242,24 @@ module Incremental
       loop do
         total = @new_urls.size + @changed_urls.size + @vulnerable_urls.size + @tested_urls.size
         puts ""
-        puts "  ━━━ Project Summary ━━━".colorize(:light_cyan)
+        puts "  ━━━ Project Data ━━━".colorize(:light_cyan)
         puts ""
-        puts "    ● #{"%6d" % @new_urls.size} New".colorize(:green)
-        puts "    ● #{"%6d" % @changed_urls.size} Changed".colorize(:yellow)
-        puts "    ● #{"%6d" % @vulnerable_urls.size} Vulnerable".colorize(:red)
-        puts "    ○ #{"%6d" % @tested_urls.size} Tested".colorize(:dark_gray)
-        puts "    ────────────────────".colorize(:dark_gray)
-        puts "    Σ  #{"%6d" % total} Total".colorize(:white)
+        puts "    #{"Project ID".colorize(:dark_gray)}    #{@project_id}"
+        puts "    #{"Project Name".colorize(:dark_gray)}  #{@project_name.empty? ? "-".colorize(:dark_gray).to_s : @project_name}"
         puts ""
-        puts "  #{"┌─────────────────────────────────────────┐".colorize(:dark_gray)}"
-        puts "  #{"│".colorize(:dark_gray)} #{"s".colorize(:light_cyan)}  Scan          #{"ea".colorize(:light_cyan)} Evaluate All    #{"│".colorize(:dark_gray)}"
-        puts "  #{"│".colorize(:dark_gray)} #{"r".colorize(:light_cyan)}  Refresh        #{"en".colorize(:light_cyan)} Evaluate New    #{"│".colorize(:dark_gray)}"
-        puts "  #{"│".colorize(:dark_gray)} #{"lo".colorize(:light_cyan)} List Other     #{"le".colorize(:light_cyan)} List Excessive  #{"│".colorize(:dark_gray)}"
-        puts "  #{"│".colorize(:dark_gray)} #{"q".colorize(:light_cyan)}  Quit                              #{"│".colorize(:dark_gray)}"
-        puts "  #{"└─────────────────────────────────────────┘".colorize(:dark_gray)}"
+        puts "    ● #{"New".ljust(11)} #{"%6d" % @new_urls.size}".colorize(:green)
+        puts "    ● #{"Changed".ljust(11)} #{"%6d" % @changed_urls.size}".colorize(:yellow)
+        puts "    ● #{"Vulnerable".ljust(11)} #{"%6d" % @vulnerable_urls.size}".colorize(:red)
+        puts "    ○ #{"Tested".ljust(11)} #{"%6d" % @tested_urls.size}".colorize(:dark_gray)
+        puts "    #{"─" * 20}".colorize(:dark_gray)
+        puts "    Σ #{"Total".ljust(11)} #{"%6d" % total}".colorize(:white)
+        puts ""
+        puts "  #{"┌#{"─" * 38}┐".colorize(:dark_gray)}"
+        puts menu_row("s", "Scan", "ea", "Evaluate All")
+        puts menu_row("r", "Refresh", "en", "Evaluate New")
+        puts menu_row("lo", "List Other", "le", "List Excessive")
+        puts menu_row("q", "Quit", "", "")
+        puts "  #{"└#{"─" * 38}┘".colorize(:dark_gray)}"
         print "  #{"❯".colorize(:light_cyan)} "
         input = gets.to_s.chomp.downcase
         case input
@@ -297,6 +302,14 @@ module Incremental
           exit 0
         end
       end
+    end
+
+    # Renders one menu row with fixed-width columns so the box borders align.
+    private def menu_row(k1 : String, l1 : String, k2 : String, l2 : String) : String
+      bar = "│".colorize(:dark_gray)
+      left = "#{k1.ljust(2).colorize(:light_cyan)} #{l1.ljust(15)}"
+      right = "#{k2.ljust(2).colorize(:light_cyan)} #{l2.ljust(16)}"
+      "  #{bar} #{left}#{right}#{bar}"
     end
 
     private def setup_bac_test
@@ -404,6 +417,16 @@ module Incremental
         # Add template ID if provided
         if template_id = @template_id
           body = body.merge({templateId: template_id})
+        end
+
+        # Add concurrency (poolSize) if provided
+        if concurrency = @concurrency
+          body = body.merge({poolSize: concurrency})
+        end
+
+        # Add request rate limit (requestsRateLimit) if provided
+        if request_rate_limit = @request_rate_limit
+          body = body.merge({requestsRateLimit: request_rate_limit})
         end
 
         if bac = @bac_aos
@@ -614,8 +637,16 @@ module Incremental
       overall_eps = Array(EP).new
       total_count = 0
       puts ""
-      puts "  ━━━ Loading Entry Points ━━━".colorize(:light_cyan)
+      puts "  ━━━ Loading Project Data ━━━".colorize(:light_cyan)
       puts ""
+
+      begin
+        project = JSON.parse(get("api/v1/projects/#{@project_id}"))
+        @project_name = project["name"]?.try(&.as_s?) || ""
+      rescue e : JSON::ParseException
+        debug("Could not load project name: #{e}")
+      end
+
       loop do
         next_id = overall_eps[-1]?.try(&.id)
         next_created_at = overall_eps[-1]?.try(&.createdAt)
@@ -705,6 +736,8 @@ bac_aos = nil                                # Array of AOs for the BAC test.
 template_id = nil                            # Template ID for scans
 max_params = Incremental::DEFAULT_MAX_PARAMS # Threshold for flagging EPs with too many params.
 skip_excessive = false                       # Auto-skip EPs over the param threshold.
+concurrency = nil                            # poolSize: max concurrent requests (1-50).
+request_rate_limit = nil                     # requestsRateLimit: requests per second (1-1000).
 
 def cluster_format?(arg) : Bool
   arg.ends_with?(".brightsec.com")
@@ -760,6 +793,24 @@ parser = OptionParser.parse do |parser|
     end
   end
   parser.on("-s", "--skip-excessive", "Automatically skip endpoints with > max-params (no prompt)") { skip_excessive = true }
+  parser.on("-C N", "--concurrency=N", "Max concurrent requests per scan (1-50, default: 10)") do |v|
+    parsed = v.to_i?
+    if parsed && parsed >= 1 && parsed <= 50
+      concurrency = parsed
+    else
+      puts "Invalid --concurrency value: #{v}. Must be an integer between 1 and 50.".colorize(:red)
+      exit 1
+    end
+  end
+  parser.on("-R N", "--request-rate-limit=N", "Requests per second per scan (1-1000, default: unlimited)") do |v|
+    parsed = v.to_i?
+    if parsed && parsed >= 1 && parsed <= 1000
+      request_rate_limit = parsed
+    else
+      puts "Invalid --request-rate-limit value: #{v}. Must be an integer between 1 and 1000.".colorize(:red)
+      exit 1
+    end
+  end
   parser.on("-h", "--help", "Show this help") do
     puts parser
     puts "\nExamples:".colorize(:green)
@@ -771,6 +822,8 @@ parser = OptionParser.parse do |parser|
     puts "    incremental -k orgSecretKey  -p projectID -a api.example.com,api2.example.com:7777"
     puts "  Scan with template:".colorize(:yellow)
     puts "    incremental -k orgSecretKey  -p projectID -t templateId123"
+    puts "  Tune load (concurrency + rate limit):".colorize(:yellow)
+    puts "    incremental -k orgSecretKey  -p projectID -C 25 -R 200"
     puts ""
     exit 0
   end
@@ -797,5 +850,5 @@ unless api_key_connect?(api_key, project_id, cluster)
 end
 spinner.stop("✔".colorize(:green).to_s + " Connected to #{cluster}")
 
-scan = Incremental::Scan.new(api_key, project_id, cluster, repeater_id, api_domains, bac_aos, template_id, max_params, skip_excessive)
+scan = Incremental::Scan.new(api_key, project_id, cluster, repeater_id, api_domains, bac_aos, template_id, max_params, skip_excessive, concurrency, request_rate_limit)
 scan.loop

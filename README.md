@@ -3,20 +3,28 @@
 A simple CLI to run incremental BrightSec scans.
 
 ```bash
-Scanning APIs...
-Scanning JS...
-Scanning POSTs...
-Scanning HTML...
-Scanning XML...
-Scanning other...
-Done spawning scans
-Project Summary
----------------
-New: 128
-Vulnerable: 0
-Tested: 0
----------------
-[s\scan] [r\refresh] [ea\evaluate all] [en\evaluate new] [q\quit]
+  ━━━ Loading Project Data ━━━
+
+  ✔ Loaded 1002 entry points
+
+  ━━━ Project Data ━━━
+
+    Project ID    6824abcd-1234
+    Project Name  My Web App
+
+    ● New           1002
+    ● Changed          0
+    ● Vulnerable       0
+    ○ Tested           0
+    ────────────────────
+    Σ Total         1002
+
+  ┌──────────────────────────────────────┐
+  │ s  Scan           ea Evaluate All    │
+  │ r  Refresh        en Evaluate New    │
+  │ lo List Other     le List Excessive  │
+  │ q  Quit                              │
+  └──────────────────────────────────────┘
 ```
 
 ## Installation
@@ -29,14 +37,36 @@ Tested: 0
 ## Usage
 
 ```bash
-Usage: incremental <api_key> <project_id> [cluster(default: app.brightsec.com)] [repeater_id]
-    -k KEY, --api-key=KEY            API Key
-    -p PROJECT, --project-id=PROJECT Project ID
-    -c CLUSTER, --cluster=CLUSTER    Cluster
+Usage: incremental -k <api_key> -p <project_id> [OPTIONS]
+
+Required arguments:
+    -k KEY, --api-key=KEY            Your Bright API Key
+    -p PROJECT, --project-id=PROJECT
+                                     Bright Project ID
+
+Optional arguments:
+    -c CLUSTER, --cluster=CLUSTER    Bright cluster (default: app.brightsec.com)
     -r REPEATER, --repeater-id=REPEATER
-                                     Repeater ID
+                                     ID of your Bright repeater
+    -a DOMAINS, --api-domains=DOMAINS
+                                     Comma-separated list of API domains (helps identify API endpoints)
+    -b AOS, --bac-aos=AOS            Comma-separated list of Auth Objects (for testing BAC vulnerabilities)
+    -t TEMPLATE, --template-id=TEMPLATE
+                                     Template ID for scans
+    -m PARAMS, --max-params=PARAMS   Flag EPs with more parameters than this (default: 300)
+    -s, --skip-excessive             Automatically skip endpoints with > max-params (no prompt)
+    -C N, --concurrency=N            Max concurrent requests per scan (1-50, default: 10)
+    -R N, --request-rate-limit=N     Requests per second per scan (1-1000, default: unlimited)
     -h, --help                       Show this help
     -v, --version                    Show version
+```
+
+### Tuning scan load
+
+Use `-C/--concurrency` to cap concurrent requests (`poolSize`, 1-50, default: 10) and `-R/--request-rate-limit` to cap requests per second (`requestsRateLimit`, 1-1000, default: unlimited). When omitted, the Bright defaults apply.
+
+```bash
+incremental -k <api_key> -p <project_id> -C 25 -R 200
 ```
 
 ### Docker usage
