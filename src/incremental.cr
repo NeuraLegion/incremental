@@ -6,7 +6,7 @@ require "option_parser"
 # Incremental is a CLI tool that allows you to smartly make incremental scans
 # using the BrightSec API.
 module Incremental
-  VERSION = "0.2.4"
+  VERSION = "0.2.5"
 
   BANNER = <<-BANNER
 
